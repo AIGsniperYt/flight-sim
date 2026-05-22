@@ -15,14 +15,22 @@ A browser-based 3D flight simulator built with Three.js featuring procedurally g
 - **W/S**: Pitch up/down
 - **A/D**: Roll left/right
 - **Q/E**: Yaw left/right
-- **Click**: Lock pointer for controls
+- **Shift/Ctrl**: Increase/decrease throttle
+- **Left mouse drag**: Switch from chase camera to orbit camera
+- **Right/middle mouse drag**: Switch from chase camera to panning orbit camera
+- **Mouse wheel**: Zoom camera
+- **C**: Return to chase camera
+- **F**: Toggle flight instrument
+- **M**: Toggle minimap
 - **F5**: Toggle debug information
+- **F6**: Toggle debug vector arrows
+- **F7**: Toggle reference arrows such as forward/right/up axes
 
 ## Getting Started
 
 1. Clone or download this repository
 2. Open `index.html` in a modern web browser
-3. Click to lock pointer controls and start flying!
+3. Use the keyboard controls to fly, then drag the mouse when you want to inspect the force arrows.
 
 ## Technical Details
 

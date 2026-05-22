@@ -27,6 +27,29 @@ export function getChunkStats() {
     return { visibleChunks, totalChunks: chunks.size };
 }
 
+export function getTerrainHeightAt(worldX, worldZ, lodScale = 1.0) {
+    const baseHeight = simplex.noise2D(worldX * baseScale, worldZ * baseScale) * heightScale * flatnessFactor;
+    const hillHeight = simplex.noise2D(worldX * hillScale, worldZ * hillScale) * heightScale * hillHeightMultiplier;
+    const mountainHeight = Math.max(0, simplex.noise2D(worldX * mountainScale, worldZ * mountainScale)) * heightScale * mountainHeightMultiplier;
+
+    return Math.floor((baseHeight + hillHeight + mountainHeight) * lodScale);
+}
+
+export function getTerrainColorAt(worldX, worldZ) {
+    const y = getTerrainHeightAt(worldX, worldZ);
+
+    if (y < heightScale * 0.3) {
+        return { r: 120, g: 204, b: 120 };
+    }
+
+    if (y < snowLevel) {
+        const shade = THREE.MathUtils.clamp(128 + y * 1.5, 120, 190);
+        return { r: shade, g: shade, b: shade };
+    }
+
+    return { r: 245, g: 245, b: 245 };
+}
+
 function generateChunk(scene, chunkX, chunkZ, lod = "near") {
     const geometry = new THREE.BufferGeometry();
     const vertices = [];
@@ -52,11 +75,7 @@ function generateChunk(scene, chunkX, chunkZ, lod = "near") {
             const worldX = x + chunkX * CHUNK_SIZE;
             const worldZ = z + chunkZ * CHUNK_SIZE;
 
-            const baseHeight = simplex.noise2D(worldX * baseScale, worldZ * baseScale) * heightScale * flatnessFactor;
-            const hillHeight = simplex.noise2D(worldX * hillScale, worldZ * hillScale) * heightScale * hillHeightMultiplier;
-            const mountainHeight = Math.max(0, simplex.noise2D(worldX * mountainScale, worldZ * mountainScale)) * heightScale * mountainHeightMultiplier;
-
-            const y = Math.floor((baseHeight + hillHeight + mountainHeight) * lodScale);
+            const y = getTerrainHeightAt(worldX, worldZ, lodScale);
 
             vertices.push(x, y, z);
 
