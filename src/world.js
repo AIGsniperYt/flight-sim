@@ -1,3 +1,6 @@
+import * as THREE from 'three';
+import SimplexNoise from 'simplex-noise';
+
 const CHUNK_SIZE = 50;
 const RENDER_DISTANCE_NEAR = 5;
 const RENDER_DISTANCE_MID = 12;
@@ -12,18 +15,9 @@ const hillHeightMultiplier = 0.1;
 const snowLevel = 0.99 * heightScale * 2;
 
 const chunks = new Map();
-let sceneRef = null;
-
 const simplex = new SimplexNoise();
 
-const frustum = new THREE.Frustum();
-const viewProjectionMatrix = new THREE.Matrix4();
-
 let visibleChunks = 0;
-
-export function initWorld(scene) {
-    sceneRef = scene;
-}
 
 export function getChunkSize() {
     return CHUNK_SIZE;
@@ -33,7 +27,7 @@ export function getChunkStats() {
     return { visibleChunks, totalChunks: chunks.size };
 }
 
-function generateChunk(chunkX, chunkZ, lod = "near") {
+function generateChunk(scene, chunkX, chunkZ, lod = "near") {
     const geometry = new THREE.BufferGeometry();
     const vertices = [];
     const colors = [];
@@ -102,7 +96,7 @@ function generateChunk(chunkX, chunkZ, lod = "near") {
     const mesh = new THREE.Mesh(geometry, material);
     mesh.position.set(chunkX * CHUNK_SIZE, 0, chunkZ * CHUNK_SIZE);
     mesh.visible = false;
-    sceneRef.add(mesh);
+    scene.add(mesh);
 
     geometry.computeBoundingBox();
     const bbox = geometry.boundingBox.clone();
@@ -113,18 +107,13 @@ function generateChunk(chunkX, chunkZ, lod = "near") {
     return mesh;
 }
 
-function isChunkInFrustum(chunk, camera) {
+function isChunkInFrustum(chunk, frustum) {
     const box = chunk.userData.boundingBox.clone();
     box.applyMatrix4(chunk.matrixWorld);
-
-    camera.updateMatrixWorld();
-    viewProjectionMatrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
-    frustum.setFromProjectionMatrix(viewProjectionMatrix);
-
     return frustum.intersectsBox(box);
 }
 
-export function updateChunks(camera) {
+export function updateChunks(scene, camera, frustum) {
     const cameraChunkX = Math.floor(camera.position.x / CHUNK_SIZE);
     const cameraChunkZ = Math.floor(camera.position.z / CHUNK_SIZE);
 
@@ -138,28 +127,33 @@ export function updateChunks(camera) {
 
             const chunkKey = `${x},${z},${lod}`;
             if (!chunks.has(chunkKey)) {
-                const chunk = generateChunk(x, z, lod);
-                chunks.set(chunkKey, chunk);
+                const mesh = generateChunk(scene, x, z, lod);
+                chunks.set(chunkKey, { mesh, data: { chunkX: x, chunkZ: z, lod } });
             }
         }
     }
 
     visibleChunks = 0;
 
-    chunks.forEach((chunk, key) => {
-        const [chunkX, chunkZ, lod] = key.split(',').map((v, i) => i < 2 ? Number(v) : v);
-
+    const toRemove = [];
+    chunks.forEach((entry, key) => {
+        const { chunkX, chunkZ, lod } = entry.data;
         const dx = Math.abs(chunkX - cameraChunkX);
         const dz = Math.abs(chunkZ - cameraChunkZ);
         const inRange = dx <= RENDER_DISTANCE_FAR && dz <= RENDER_DISTANCE_FAR;
 
         if (!inRange) {
-            sceneRef.remove(chunk);
-            chunk.geometry.dispose();
-            chunks.delete(key);
+            toRemove.push(key);
         } else {
-            chunk.visible = isChunkInFrustum(chunk, camera);
-            if (chunk.visible) visibleChunks++;
+            entry.mesh.visible = isChunkInFrustum(entry.mesh, frustum);
+            if (entry.mesh.visible) visibleChunks++;
         }
     });
+
+    for (const key of toRemove) {
+        const entry = chunks.get(key);
+        scene.remove(entry.mesh);
+        entry.mesh.geometry.dispose();
+        chunks.delete(key);
+    }
 }

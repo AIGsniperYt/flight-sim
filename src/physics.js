@@ -1,3 +1,5 @@
+import * as THREE from 'three';
+
 const planeGeometry = new THREE.BoxGeometry(4, 1, 8);
 const planeMaterial = new THREE.MeshStandardMaterial({ color: 0xff3aae, metalness: 0.2, roughness: 0.6 });
 const plane = new THREE.Mesh(planeGeometry, planeMaterial);
@@ -11,19 +13,9 @@ const angularDamping = 2.0;
 
 const angVel = new THREE.Vector3(0, 0, 0);
 
-let targetBank = 0;
-const maxAutoBank = THREE.MathUtils.degToRad(40);
-const autoBankStrength = 1.2;
-const bankLerpSpeed = 3.0;
-
 const keyboard = {};
 
 const cameraOffset = new THREE.Vector3(0, 5, 18);
-const cameraLerp = 0.12;
-const lookAtLerp = 0.25;
-
-let cameraTargetPos = new THREE.Vector3();
-let cameraLookAtPos = new THREE.Vector3();
 
 export function initPhysics(scene) {
     scene.add(plane);
@@ -63,19 +55,9 @@ export function updatePlane(dt) {
     if (plane.position.y < 2) plane.position.y = 2;
 }
 
-function normalizeAngle(a) {
-    return Math.atan2(Math.sin(a), Math.cos(a));
-}
-
-function shortestAngleDiff(a, b) {
-    const diff = normalizeAngle(b - a);
-    return diff;
-}
-
-export function updateCamera(camera, dt) {
+export function updateCamera(camera) {
     const worldOffset = cameraOffset.clone().applyQuaternion(plane.quaternion);
     camera.position.copy(plane.position).add(worldOffset);
-
     camera.quaternion.copy(plane.quaternion);
 }
 

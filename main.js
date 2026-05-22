@@ -1,4 +1,6 @@
-import { initWorld, updateChunks, getChunkStats } from './src/world.js';
+import * as THREE from 'three';
+import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
+import { updateChunks, getChunkStats } from './src/world.js';
 import { initPhysics, updatePlane, updateCamera, getPlane } from './src/physics.js';
 
 const scene = new THREE.Scene();
@@ -13,15 +15,17 @@ renderer.setSize(window.innerWidth, window.innerHeight);
 document.body.appendChild(renderer.domElement);
 renderer.setClearColor(0x87ceeb);
 
-const controls = new THREE.PointerLockControls(camera, renderer.domElement);
+const controls = new PointerLockControls(camera, renderer.domElement);
 document.addEventListener('click', () => controls.lock());
 
 const light = new THREE.DirectionalLight(0xffffff, 1);
 light.position.set(50, 100, 50).normalize();
 scene.add(light);
 
-initWorld(scene);
 initPhysics(scene);
+
+const frustum = new THREE.Frustum();
+const viewProjectionMatrix = new THREE.Matrix4();
 
 let debugVisible = true;
 const debugDiv = document.createElement('div');
@@ -48,8 +52,14 @@ document.addEventListener('keydown', (event) => {
 
 let lastFrameTime = performance.now();
 let fps = 0;
+let lastDebugUpdate = 0;
+const DEBUG_INTERVAL = 200;
 
 function updateDebug(dt) {
+    const now = performance.now();
+    if (now - lastDebugUpdate < DEBUG_INTERVAL) return;
+    lastDebugUpdate = now;
+
     fps = Math.round(1000 / (dt || 16.67));
     let memUsage = 'N/A';
     if (performance.memory) {
@@ -78,10 +88,14 @@ function animate() {
     const dt = Math.min(0.05, (now - lastFrameTime) / 1000);
     lastFrameTime = now;
 
-    updateChunks(camera);
+    camera.updateMatrixWorld();
+    viewProjectionMatrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+    frustum.setFromProjectionMatrix(viewProjectionMatrix);
+
+    updateChunks(scene, camera, frustum);
     updatePlane(dt);
-    updateCamera(camera, dt);
-    updateDebug((now - lastFrameTime) || (dt * 1000));
+    updateCamera(camera);
+    updateDebug(dt * 1000);
 
     renderer.render(scene, camera);
 }
