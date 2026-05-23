@@ -16,6 +16,8 @@ const snowLevel = 0.99 * heightScale * 2;
 
 const chunks = new Map();
 const simplex = new SimplexNoise();
+const heightCache = new Map();
+const HEIGHT_CACHE_MAX = 500000;
 
 let visibleChunks = 0;
 
@@ -28,11 +30,22 @@ export function getChunkStats() {
 }
 
 export function getTerrainHeightAt(worldX, worldZ, lodScale = 1.0) {
+    const key = `${worldX},${worldZ}`;
+    const cached = heightCache.get(key);
+    if (cached !== undefined) {
+        return Math.floor(cached * lodScale);
+    }
+
     const baseHeight = simplex.noise2D(worldX * baseScale, worldZ * baseScale) * heightScale * flatnessFactor;
     const hillHeight = simplex.noise2D(worldX * hillScale, worldZ * hillScale) * heightScale * hillHeightMultiplier;
     const mountainHeight = Math.max(0, simplex.noise2D(worldX * mountainScale, worldZ * mountainScale)) * heightScale * mountainHeightMultiplier;
+    const height = baseHeight + hillHeight + mountainHeight;
 
-    return Math.floor((baseHeight + hillHeight + mountainHeight) * lodScale);
+    if (heightCache.size >= HEIGHT_CACHE_MAX) {
+        heightCache.clear();
+    }
+    heightCache.set(key, height);
+    return Math.floor(height * lodScale);
 }
 
 export function getTerrainColorAt(worldX, worldZ) {
@@ -50,60 +63,114 @@ export function getTerrainColorAt(worldX, worldZ) {
     return { r: 245, g: 245, b: 245 };
 }
 
-function generateChunk(scene, chunkX, chunkZ, lod = "near") {
-    const geometry = new THREE.BufferGeometry();
-    const vertices = [];
-    const colors = [];
-    const indices = [];
+const chunkPool = [];
+const precomputedIndices = {};
+
+function getIndices(lod) {
+    if (precomputedIndices[lod]) return precomputedIndices[lod];
 
     let step = 1;
-    let lodScale = 1.0;
+    if (lod === "mid") step = 4;
+    else if (lod === "far") step = 10;
 
-    if (lod === "mid") {
-        step = 2;
-        lodScale = 0.5;
-    } else if (lod === "far") {
-        step = CHUNK_SIZE;
-        lodScale = 0.1;
+    const vertsPerSide = Math.ceil(CHUNK_SIZE / step);
+    const indices = [];
+
+    for (let row = 0; row < vertsPerSide - 1; row++) {
+        for (let col = 0; col < vertsPerSide - 1; col++) {
+            const a = row * vertsPerSide + col;
+            const b = (row + 1) * vertsPerSide + col;
+            const c = row * vertsPerSide + col + 1;
+            const d = (row + 1) * vertsPerSide + col + 1;
+            indices.push(a, b, c, b, d, c);
+        }
     }
 
-    let minY = Infinity;
-    let maxY = -Infinity;
+    precomputedIndices[lod] = indices;
+    return indices;
+}
+
+function populateChunkGeometry(geometry, chunkX, chunkZ, lod) {
+    let step = 1;
+    let lodScale = 1.0;
+    if (lod === "mid") { step = 4; lodScale = 0.5; }
+    else if (lod === "far") { step = 10; lodScale = 0.1; }
+
+    const vertsPerSide = Math.ceil(CHUNK_SIZE / step);
+    const vertexCount = vertsPerSide * vertsPerSide;
+
+    const posAttr = geometry.attributes.position;
+    const colAttr = geometry.attributes.color;
+    const reuse = posAttr && posAttr.count === vertexCount;
+
+    const positions = reuse ? posAttr.array : new Float32Array(vertexCount * 3);
+    const colors = reuse ? colAttr.array : new Float32Array(vertexCount * 3);
+    let minY = Infinity, maxY = -Infinity, idx = 0;
 
     for (let x = 0; x < CHUNK_SIZE; x += step) {
         for (let z = 0; z < CHUNK_SIZE; z += step) {
             const worldX = x + chunkX * CHUNK_SIZE;
             const worldZ = z + chunkZ * CHUNK_SIZE;
-
             const y = getTerrainHeightAt(worldX, worldZ, lodScale);
 
-            vertices.push(x, y, z);
+            const i3 = idx * 3;
+            positions[i3] = x;
+            positions[i3 + 1] = y;
+            positions[i3 + 2] = z;
 
             if (y < minY) minY = y;
             if (y > maxY) maxY = y;
 
             if (y < heightScale * 0.3) {
-                colors.push(0.47, 0.8, 0.47);
+                colors[i3] = 0.47; colors[i3 + 1] = 0.8; colors[i3 + 2] = 0.47;
             } else if (y < snowLevel) {
-                colors.push(0.5, 0.5, 0.5);
+                colors[i3] = 0.5; colors[i3 + 1] = 0.5; colors[i3 + 2] = 0.5;
             } else {
-                colors.push(1.0, 1.0, 1.0);
+                colors[i3] = 1.0; colors[i3 + 1] = 1.0; colors[i3 + 2] = 1.0;
             }
 
-            if (x < CHUNK_SIZE - step && z < CHUNK_SIZE - step) {
-                const row = CHUNK_SIZE / step;
-                const a = (x / step) + (z / step) * row;
-                const b = (x / step) + (z / step + 1) * row;
-                const c = (x / step + 1) + (z / step) * row;
-                const d = (x / step + 1) + (z / step + 1) * row;
-                indices.push(a, b, c, b, d, c);
-            }
+            idx++;
         }
     }
 
-    geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
-    geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
-    geometry.setIndex(indices);
+    if (reuse) {
+        posAttr.needsUpdate = true;
+        colAttr.needsUpdate = true;
+    } else {
+        geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+        geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+    }
+
+    const preIndex = getIndices(lod);
+    const indexAttr = geometry.index;
+    if (indexAttr && indexAttr.count === preIndex.length) {
+        indexAttr.array.set(preIndex);
+        indexAttr.needsUpdate = true;
+    } else {
+        geometry.setIndex(preIndex);
+    }
+
+    return new THREE.Box3(
+        new THREE.Vector3(0, minY - 10, 0),
+        new THREE.Vector3(CHUNK_SIZE, maxY + 10, CHUNK_SIZE)
+    );
+}
+
+function generateChunk(scene, chunkX, chunkZ, lod = "near") {
+    for (let i = 0; i < chunkPool.length; i++) {
+        if (chunkPool[i].userData.lod === lod) {
+            const mesh = chunkPool.splice(i, 1)[0];
+            const bbox = populateChunkGeometry(mesh.geometry, chunkX, chunkZ, lod);
+            mesh.position.set(chunkX * CHUNK_SIZE, 0, chunkZ * CHUNK_SIZE);
+            mesh.userData.boundingBox = bbox;
+            mesh.visible = false;
+            scene.add(mesh);
+            return mesh;
+        }
+    }
+
+    const geometry = new THREE.BufferGeometry();
+    const bbox = populateChunkGeometry(geometry, chunkX, chunkZ, lod);
 
     const material = new THREE.MeshStandardMaterial({
         vertexColors: true,
@@ -114,22 +181,20 @@ function generateChunk(scene, chunkX, chunkZ, lod = "near") {
 
     const mesh = new THREE.Mesh(geometry, material);
     mesh.position.set(chunkX * CHUNK_SIZE, 0, chunkZ * CHUNK_SIZE);
+    mesh.userData.lod = lod;
+    mesh.userData.boundingBox = bbox;
     mesh.visible = false;
     scene.add(mesh);
-
-    geometry.computeBoundingBox();
-    const bbox = geometry.boundingBox.clone();
-    bbox.min.y = Math.min(minY - 10, bbox.min.y);
-    bbox.max.y = Math.max(maxY + 10, bbox.max.y);
-    mesh.userData.boundingBox = bbox;
 
     return mesh;
 }
 
+const _bbox = new THREE.Box3();
+
 function isChunkInFrustum(chunk, frustum) {
-    const box = chunk.userData.boundingBox.clone();
-    box.applyMatrix4(chunk.matrixWorld);
-    return frustum.intersectsBox(box);
+    _bbox.copy(chunk.userData.boundingBox);
+    _bbox.applyMatrix4(chunk.matrixWorld);
+    return frustum.intersectsBox(_bbox);
 }
 
 export function updateChunks(scene, camera, frustum) {
@@ -172,7 +237,7 @@ export function updateChunks(scene, camera, frustum) {
     for (const key of toRemove) {
         const entry = chunks.get(key);
         scene.remove(entry.mesh);
-        entry.mesh.geometry.dispose();
+        chunkPool.push(entry.mesh);
         chunks.delete(key);
     }
 }
