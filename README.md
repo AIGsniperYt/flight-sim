@@ -20,6 +20,7 @@ A browser-based 3D flight simulator built with Three.js featuring procedurally g
 - **Right/middle mouse drag**: Switch from chase camera to panning orbit camera
 - **Mouse wheel**: Zoom camera
 - **C**: Return to chase camera
+- **J**: Toggle chunk gap mode (dev: visible gaps / player: seamless terrain)
 - **F**: Toggle flight instrument
 - **M**: Toggle minimap
 - **F5**: Toggle debug information

@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { updateChunks, getChunkStats, getTerrainColorAt } from './src/world.js';
+import { updateChunks, getChunkStats, getTerrainColorAt, toggleGapMode, getShowGaps } from './src/world.js';
 import {
     initPhysics,
     updatePlane,
@@ -292,6 +292,8 @@ document.addEventListener('keydown', (event) => {
         applyDebugArrowVisibility();
     } else if (event.code === 'KeyC' && !event.ctrlKey && !event.metaKey) {
         resetChaseCamera();
+    } else if (event.code === 'KeyJ' && !event.ctrlKey && !event.metaKey) {
+        toggleGapMode(scene);
     }
 });
 
@@ -337,6 +339,7 @@ function updateDebug(dt) {
             <b>Debug Stats</b><br>
             FPS: ${fps}<br>
             Visible Chunks: ${stats.visibleChunks}/${stats.totalChunks}<br>
+            Chunks: ${getShowGaps() ? 'GAPPED (dev)' : 'SEAMLESS'} <b>J</b> toggles<br>
             Camera Mode: ${cameraMode}<br>
             Camera: (${camera.position.x.toFixed(1)}, ${camera.position.y.toFixed(1)}, ${camera.position.z.toFixed(1)})<br>
             Camera Target: (${cameraControls.target.x.toFixed(1)}, ${cameraControls.target.y.toFixed(1)}, ${cameraControls.target.z.toFixed(1)})<br>
