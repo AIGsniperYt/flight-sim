@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { updateChunks, getChunkStats, getTerrainColorAt, toggleGapMode, getShowGaps } from './src/world.js';
+import { updateChunks, getChunkStats, toggleGapMode, getShowGaps } from './src/world.js';
+import { getTerrainColorAt, getTerrainStats } from './src/terrain.js';
 import {
     initPhysics,
     updatePlane,
@@ -339,6 +340,9 @@ function updateDebug(dt) {
             <b>Debug Stats</b><br>
             FPS: ${fps}<br>
             Visible Chunks: ${stats.visibleChunks}/${stats.totalChunks}<br>
+            <b>Processing</b><br>
+            Chunk Gen: ${stats.chunkGenTime.toFixed(1)} ms &nbsp; +${stats.chunksAdded}/-${stats.chunksRemoved}<br>
+            Terrain Cache: ${(function(){ const t=getTerrainStats(); return `${t.tiles} tiles &nbsp; ${t.tileHits}H/${t.tileMisses}M &nbsp; gen:${t.tilesGenerated} evict:${t.tileEvictions}`; })()}<br>
             Chunks: ${getShowGaps() ? 'GAPPED (dev)' : 'SEAMLESS'} <b>J</b> toggles<br>
             Camera Mode: ${cameraMode}<br>
             Camera: (${camera.position.x.toFixed(1)}, ${camera.position.y.toFixed(1)}, ${camera.position.z.toFixed(1)})<br>
@@ -472,6 +476,9 @@ function updateOrbitCamera() {
     cameraControls.update();
 }
 
+const lastCameraPos = new THREE.Vector3();
+const cameraVelocity = new THREE.Vector3();
+
 function animate() {
     requestAnimationFrame(animate);
 
@@ -486,7 +493,14 @@ function animate() {
     viewProjectionMatrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
     frustum.setFromProjectionMatrix(viewProjectionMatrix);
 
-    updateChunks(scene, camera, frustum);
+    if (dt > 0) {
+        cameraVelocity.subVectors(camera.position, lastCameraPos).divideScalar(dt);
+    } else {
+        cameraVelocity.set(0, 0, 0);
+    }
+    lastCameraPos.copy(camera.position);
+
+    updateChunks(scene, camera, frustum, cameraVelocity.x, cameraVelocity.z);
     updateDebug(dt * 1000);
     updateFlightInstrument();
     drawMinimap(now);

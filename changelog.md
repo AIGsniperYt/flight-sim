@@ -1,10 +1,106 @@
 # Changelog
+## **24/05/2026 — GPU Terrain, Predictive Loading & Processing Metrics**
+
+### **Processing Profiling Metrics**
+**OPT:** Added per-frame processing metrics to the debug overlay. `world.js` now tracks chunk generation time (ms), chunks added and removed per frame. `terrain.js` tracks tile cache hits/misses, total tiles generated, and LRU evictions. Stats reset each debug interval via `getChunkStats()` and `getTerrainStats()`.
+
+**Before (debug overlay):**
+```js
+Visible Chunks: 120/800
+```
+
+**After (debug overlay):**
+```js
+Chunk Gen: 0.3 ms  +2/-3
+Terrain Cache: 42 tiles  1850H/3M  gen:120 evict:0
+```
+
+### **GPU-Based Terrain Shader**
+**OPT:** Moved terrain height and color computation from JS (CPU) to a custom vertex/fragment shader (GPU). Replaced CPU vertex calculations with a `MeshStandardMaterial.onBeforeCompile` shader injection.
+
+**Before:**
+```js
+const material = new THREE.MeshStandardMaterial({ vertexColors: true, ... });
+// CPU loops over 2500+ vertices per chunk
+const y = getHeightScaled(worldX, worldZ, lodScale);
+const { r, g, b } = getColorComponents(y);
+```
+
+**After:**
+```js
+material.onBeforeCompile = (shader) => {
+    // Inject GLSL simplex noise
+    shader.vertexShader = `... simplex noise GLSL ...` + shader.vertexShader.replace(
+        '#include <begin_vertex>',
+        `vec3 transformed = vec3( position );
+         float h = computeHeight(transformed.x, transformed.z...);
+         transformed.y = floor(h * lodScale);
+         vHeight = h;`
+    );
+};
+```
+
+### **Predictive Chunk Loading**
+**OPT:** Extended the chunk generation scan by 1-2 chunks in the direction of camera movement to pre-load terrain before it enters view, reducing visual pop-in.
+
+**Before:**
+```js
+updateChunks(scene, camera, frustum);
+for (let x = cameraChunkX - RENDER_DISTANCE_FAR; x <= cameraChunkX + RENDER_DISTANCE_FAR; x++) { ... }
+```
+
+**After:**
+```js
+updateChunks(scene, camera, frustum, cameraVelocity.x, cameraVelocity.z);
+const extX = Math.abs(vx) > 10 ? Math.sign(vx) * 2 : 0;
+const minX = cameraChunkX - RENDER_DISTANCE_FAR + Math.min(0, extX);
+const maxX = cameraChunkX + RENDER_DISTANCE_FAR + Math.max(0, extX);
+for (let x = minX; x <= maxX; x++) { ... }
+```
+---
 
 ## **23/05/2026 — Performance & Rendering Optimisations**
 
+### **Data-Oriented Terrain System**
+**OPT:** Extracted all terrain height/color generation into `src/terrain.js` — a standalone module with no THREE.js dependency. Uses a tiled Float32Array heightmap (2000 tiles × 50×50 samples = 5M samples max) instead of a flat per-coordinate Map. Chunk rendering (`world.js`) and minimap (`main.js`) both read from the same terrain data source.
+
+**Architecture change:**
+```
+Before: world.js owned simplex noise, cache, height/color functions
+After:  terrain.js owns data (no rendering deps)
+        world.js imports getHeightScaled + getColorComponents for chunk building
+        main.js imports getTerrainColorAt for minimap
+```
+
+**Before (per-coordinate Map cache in world.js):**
+```js
+const heightCache = new Map();  // one entry per (worldX, worldZ)
+export function getTerrainHeightAt(worldX, worldZ, lodScale) {
+    const key = `${worldX},${worldZ}`;
+    let h = heightCache.get(key);
+    if (h === undefined) {
+        h = computeNoise(worldX, worldZ);
+        heightCache.set(key, h);
+    }
+    return Math.floor(h * lodScale);
+}
+```
+
+**After (tiled Float32Array in terrain.js):**
+```js
+const tiles = new Map();  // one entry per tile, tile = 50×50 Float32Array
+export function getHeight(worldX, worldZ) {
+    const tileX = Math.floor(worldX / 50);
+    const tileZ = Math.floor(worldZ / 50);
+    const tile = ensureTile(tileX, tileZ);  // generates full tile on miss
+    return tile[iz * 50 + ix];  // O(1) array lookup
+}
+```
+
 ### **Merged Geometries per LOD (Draw Call Reduction)**
 **OPT:** Drastically reduced draw calls from ~2600 to 12 by replacing per-chunk `THREE.Mesh` objects with incrementally-updated, pre-allocated merged geometries.
-Uses 12 static meshes (3 LODs × 4 world quadrants) to maintain frustum culling while completely eliminating object creation and chunk pooling.
+Uses 12 static meshes (3 LODs × 4 world quadrants) to maintain frustum culling while completely eliminating object creation and chunk pooling. 
+*Detailed metrics, benchmarking tables, and architectural explanations are documented in [performance_comparison.md](file:///c:/Users/thahm/OneDrive/Documents/website/webgl/flight-sim/performance_comparison.md).*
 
 **Before:**
 ```js
@@ -31,12 +127,49 @@ bucket.geometry.attributes.position.needsUpdate = true;
 - Increased the `maxChunks` buffer limit slightly for added safety margin.
 - Updated chunk removal to collapse the $x$, $y$, and $z$ coordinates of vertices to `(0, -99999, 0)`, rendering them as zero-area triangles that the GPU trivially drops.
 
----
+### **Streaming Terrain System**
+**OPT:** Replaced destructive `tiles.clear()` eviction with LRU-style eviction (oldest 25% evicted when cache fills). Added one-element tile cache (`_cachedTileKey`/`_cachedTile`) to avoid redundant Map operations during chunk generation (2500 queries all hit the same tile).
 
-### **Seamless Chunk Tiling & J Key Toggle**
-**BUG:** Vertex range `x < CHUNK_SIZE` left a 1-unit gap between adjacent chunks. With step=4 (mid LOD) the gaps scaled proportionally. Flying under terrain revealed all layers and gaps.
+In `updateChunks`, added camera chunk position tracking: the full 2601-iteration scan is skipped when the camera hasn't crossed a chunk boundary. Reusable arrays (`_toAdd`, `_toRemove`) and Set (`_newActive`) replace per-frame allocations, reducing GC pressure.
 
-**Fix:** 
+**Before (terrain.js):**
+```js
+if (tiles.size >= MAX_TILES) tiles.clear();  // nukes everything
+```
+
+**After (terrain.js):**
+```js
+if (tiles.size >= MAX_TILES) {
+    const toEvict = MAX_TILES >> 2;
+    let evicted = 0;
+    for (const k of tiles.keys()) {
+        if (evicted >= toEvict) break;
+        tiles.delete(k);  // evict oldest entries only
+        evicted++;
+    }
+}
+```
+
+**Before (world.js — per-frame full scan):**
+```js
+const newActive = new Set();
+const toAdd = [];
+const toRemove = [];
+// ... full scan every frame
+```
+
+**After (world.js — skip when camera stationary):**
+```js
+if (cameraChunkX !== _lastCamCX || cameraChunkZ !== _lastCamCZ) {
+    // ... scan only when camera crosses chunk boundary
+}
+// frustum culling and dirty-flag upload still run every frame
+```
+
+
+
+### **Chunk Gap Fix & Seamless Toggle**
+**FIX:** 
 - Mid step changed from 4 → 5 (divides CHUNK_SIZE evenly)
 - Dev mode (`showGaps=true`, default): `x <= CHUNK_SIZE - 1` — preserves intentional gaps for debugging
 - Player mode (`showGaps=false`): `x <= CHUNK_SIZE` — inclusive range tiles chunks edge-to-edge with no gaps
