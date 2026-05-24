@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { getHeight } from './terrain.js';
+import { getHeightScaled } from './terrain.js';
 
 const planeGeometry = new THREE.BoxGeometry(4, 1, 8);
 const planeMaterial = new THREE.MeshStandardMaterial({ color: 0xff3aae, metalness: 0.2, roughness: 0.6 });
@@ -509,7 +509,7 @@ export function updatePlane(dt) {
 
     if (!_crashed) {
         const impactSpeed = velocity.length();
-        const terrainY = getHeight(plane.position.x, plane.position.z);
+        const terrainY = getHeightScaled(plane.position.x, plane.position.z, 1.0);
         if (plane.position.y < terrainY) {
             if (_collisionsEnabled && impactSpeed >= AIRCRAFT.crashSpeed) {
                 _crashed = true;

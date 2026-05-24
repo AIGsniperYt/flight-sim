@@ -1,5 +1,3 @@
-import SimplexNoise from 'simplex-noise';
-
 const TILE_SIZE = 50;
 const MAX_TILES = 2000;
 
@@ -13,7 +11,63 @@ const hillHeightMultiplier = 0.1;
 
 const snowLevel = 0.99 * heightScale * 2;
 
-const simplex = new SimplexNoise();
+function snoise2D(x, y) {
+    const mod289 = (v) => v - Math.floor(v * (1 / 289)) * 289;
+    const permute = (v) => mod289((v * 34 + 1) * v);
+    const taylorInvSqrt = (r) => 1.79284291400159 - 0.85373472095314 * r;
+    const fade = (t) => t * t * t * (t * (t * 6 - 15) + 10);
+
+    const Pi0 = Math.floor(x), Pi1 = Math.floor(y);
+    const Pi2 = Math.floor(x) + 1, Pi3 = Math.floor(y) + 1;
+    const Pf0 = x - Pi0, Pf1 = y - Pi1;
+    const Pf2 = x - Pi2, Pf3 = y - Pi3;
+
+    const p0 = mod289(Pi0), p1 = mod289(Pi1), p2 = mod289(Pi2), p3 = mod289(Pi3);
+
+    const ix0 = p0, ix1 = p2, ix2 = p0, ix3 = p2;
+    const iy0 = p1, iy1 = p1, iy2 = p3, iy3 = p3;
+    const fx0 = Pf0, fx1 = Pf2, fx2 = Pf0, fx3 = Pf2;
+    const fy0 = Pf1, fy1 = Pf1, fy2 = Pf3, fy3 = Pf3;
+
+    let i0 = mod289(permute(permute(ix0) + iy0));
+    let i1 = mod289(permute(permute(ix1) + iy1));
+    let i2 = mod289(permute(permute(ix2) + iy2));
+    let i3 = mod289(permute(permute(ix3) + iy3));
+
+    const gx0 = (i0 * (1 / 41) - Math.floor(i0 * (1 / 41))) * 2 - 1;
+    const gx1 = (i1 * (1 / 41) - Math.floor(i1 * (1 / 41))) * 2 - 1;
+    const gx2 = (i2 * (1 / 41) - Math.floor(i2 * (1 / 41))) * 2 - 1;
+    const gx3 = (i3 * (1 / 41) - Math.floor(i3 * (1 / 41))) * 2 - 1;
+    const gy0 = Math.abs(gx0) - 0.5, gy1 = Math.abs(gx1) - 0.5;
+    const gy2 = Math.abs(gx2) - 0.5, gy3 = Math.abs(gx3) - 0.5;
+
+    const tx0 = Math.floor(gx0 + 0.5), tx1 = Math.floor(gx1 + 0.5);
+    const tx2 = Math.floor(gx2 + 0.5), tx3 = Math.floor(gx3 + 0.5);
+
+    const gx0f = gx0 - tx0, gx1f = gx1 - tx1;
+    const gx2f = gx2 - tx2, gx3f = gx3 - tx3;
+
+    const n0 = taylorInvSqrt(gx0f * gx0f + gy0 * gy0);
+    const n1 = taylorInvSqrt(gx2f * gx2f + gy2 * gy2);
+    const n2 = taylorInvSqrt(gx1f * gx1f + gy1 * gy1);
+    const n3 = taylorInvSqrt(gx3f * gx3f + gy3 * gy3);
+
+    const g00x = gx0f * n0, g00y = gy0 * n0;
+    const g10x = gx1f * n2, g10y = gy1 * n2;
+    const g01x = gx2f * n1, g01y = gy2 * n1;
+    const g11x = gx3f * n3, g11y = gy3 * n3;
+
+    const n00 = g00x * fx0 + g00y * fy0;
+    const n10 = g10x * fx1 + g10y * fy1;
+    const n01 = g01x * fx2 + g01y * fy2;
+    const n11 = g11x * fx3 + g11y * fy3;
+
+    const fadeX = fade(Pf0), fadeY = fade(Pf1);
+    const nx0 = n00 + (n10 - n00) * fadeX;
+    const nx1 = n01 + (n11 - n01) * fadeX;
+    return 2.3 * (nx0 + (nx1 - nx0) * fadeY);
+}
+
 const tiles = new Map();
 let _cachedTileKey = null;
 let _cachedTile = null;
@@ -28,9 +82,9 @@ function generateTile(tileX, tileZ) {
         for (let x = 0; x < TILE_SIZE; x++) {
             const wx = x + originX;
             const wz = z + originZ;
-            const base = simplex.noise2D(wx * baseScale, wz * baseScale) * heightScale * flatnessFactor;
-            const hill = simplex.noise2D(wx * hillScale, wz * hillScale) * heightScale * hillHeightMultiplier;
-            const mountain = Math.max(0, simplex.noise2D(wx * mountainScale, wz * mountainScale)) * heightScale * mountainHeightMultiplier;
+            const base = snoise2D(wx * baseScale, wz * baseScale) * heightScale * flatnessFactor;
+            const hill = snoise2D(wx * hillScale, wz * hillScale) * heightScale * hillHeightMultiplier;
+            const mountain = Math.max(0, snoise2D(wx * mountainScale, wz * mountainScale)) * heightScale * mountainHeightMultiplier;
             data[i++] = base + hill + mountain;
         }
     }

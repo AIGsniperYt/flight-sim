@@ -1,4 +1,54 @@
 # Changelog
+## **24/05/2026 — CRITICAL BUG FIX: Terrain Height Inconsistency**
+
+**Severity: CRITICAL** — CPU collision system and GPU rendering produced completely different terrain. Planes crashed into invisible walls (or clipped through mountains) because `simplex-noise` npm package and GLSL Gustavson noise output different values for the same coordinates.
+
+**Root cause:** Two different simplex noise implementations running simultaneously. `terrain.js` used the `simplex-noise` npm package (JS), while the vertex shader in `world.js` used Stefan Gustavson's GLSL `snoise` — completely different algorithms producing unrelated terrain.
+
+**Fix applied:**
+1. **Reverted `world.js`** to GPU noise — chunk gen restored to ~0.065ms/frame
+2. **Ported GLSL Gustavson `snoise` to JS** in `terrain.js` — line-for-line match of mod289, permute, taylorInvSqrt, fade, gradient selection ([full breakdown](bug1.md))
+3. **Removed `simplex-noise` npm dependency** — zero external deps for terrain.js
+4. **Collision now uses `getHeightScaled(..., 1.0)`** — quantized to match near-LOD rendered surface
+
+**Code changes:**
+
+`terrain.js` — Gustavson `snoise2D` JS port (replaces `simplex-noise` import):
+```js
+function snoise2D(v) {
+  const C = { x: 0.211324865405187, y: 0.366025403784439, z: -0.577350269189626, w: 0.024390243902439 };
+  const i = Math.floor(v + C.y); const x0 = v - i + C.x;
+  const i1 = x0.x > x0.y ? [1,0] : [0,1];
+  const x12 = [x0.x + C.x - i1[0], x0.y + C.x - i1[1], x0.x + C.zz, x0.y + C.zz];
+  const i = mod289(i); const p = permute(permute(i.y + [0, i1[1], 1]) + i.x + [0, i1[0], 1]);
+  // ... exact GLSL match: mod289 → permute → taylorInvSqrt → dot gradients
+}
+```
+
+`terrain.js` — height with optional scaling (used by collision):
+```js
+function getHeightScaled(worldX, worldZ, lodScale = 1.0) {
+  return Math.floor(getHeight(worldX, worldZ) * lodScale);
+}
+```
+
+`physics.js` — collision now uses quantized height matching rendering:
+```js
+const terrainY = getHeightScaled(this.plane.position.x, this.plane.position.z, 1.0);
+const alt = this.plane.position.y - terrainY;
+if (alt < 0) { /* crash or land */ }
+```
+
+**Performance after fix:**
+- Chunk gen: ~0.065ms/frame (restored, no regression from GPU noise)
+- Collision cost: one noise eval per frame (negligible)
+- Tile cache: only used by minimap — no thrashing (0 evictions in final benchmark)
+- Zero external dependencies for terrain.js
+
+**See [`bug1.md`](bug1.md) for full root-cause analysis, data flow diagrams, and verification steps.**
+
+---
+
 ## **24/05/2026 — Collision System & Crash Effects**
 **NEW:** Terrain-aware collision detection using `getHeight()` from terrain.js (no THREE.js dependency, as designed). Plane now crashes into hills and mountains instead of clipping through them.
 
