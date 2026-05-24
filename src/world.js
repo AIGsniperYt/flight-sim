@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { clearCache as clearTerrainCache } from './terrain.js';
+import { clearCache as clearTerrainCache, getHeight } from './terrain.js';
 
 const simplexNoiseGLSL = `
 // GLSL textureless classic 2D noise "cnoise",
@@ -72,6 +72,16 @@ const _newActive = new Set();
 const _toAdd = [];
 const _toRemove = [];
 let _chunkGenTime = 0, _chunksAdded = 0, _chunksRemoved = 0;
+const _terrainMaterials = [];
+
+export function toggleWireframe() {
+    const on = !_terrainMaterials[0]?.wireframe;
+    for (const m of _terrainMaterials) m.wireframe = on;
+    return on;
+}
+export function getWireframe() {
+    return _terrainMaterials[0]?.wireframe ?? false;
+}
 
 export function getChunkSize() {
     return CHUNK_SIZE;
@@ -165,6 +175,7 @@ function initMeshes(scene) {
             side: THREE.DoubleSide,
             fog: true
         });
+        _terrainMaterials.push(material);
 
         material.onBeforeCompile = (shader) => {
             shader.uniforms.baseScale = { value: 0.02 };

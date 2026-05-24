@@ -1,6 +1,52 @@
 # Changelog
+## **24/05/2026 — Collision System & Crash Effects**
+**NEW:** Terrain-aware collision detection using `getHeight()` from terrain.js (no THREE.js dependency, as designed). Plane now crashes into hills and mountains instead of clipping through them.
+
+This is a naive implementation, as in real life, planes crash if they hit at a certain angle and speed, not purely speed, the angle between plane and plane (dimension) also matters greatly, rather than simply speed, a horizontal f16 at 200kmh can land more likely than a nosediving f16 at 20ms. This is more of a placeholder to first make collisions function, before improving crash logic
+
+**Crash vs Landing:**
+- `crashSpeed` per aircraft preset: Cessna 172 = 20 m/s, F-16 = 100 m/s
+- Contact at speed ≥ crashSpeed = **CRASH** (explosion, invisible, auto-respawn after 3s)
+- Contact at speed < crashSpeed = **landing** (gentle clamp to terrain surface)
+- Crashing can be toggled using K to enable/disable collisions
+
+**Before:** Flat y=2 ground clamp that let the plane clip through all terrain.
+```js
+if (plane.position.y < 2) {
+    plane.position.y = 2;
+    if (velocity.y < 0) velocity.y = 0;
+}
+```
+
+**After:** Terrain-aware collision with crash/landing distinction.
+```js
+const terrainY = getHeight(plane.position.x, plane.position.z);
+if (plane.position.y < terrainY) {
+    if (_collisionsEnabled && speed >= AIRCRAFT.crashSpeed) {
+        // CRASH — invoke callbacks, hide plane
+        _crashed = true;
+        plane.visible = false;
+        for (const fn of _crashCallbacks) fn(...);
+    } else {
+        // Landing — clamp to terrain
+        plane.position.y = terrainY;
+        if (velocity.y < 0) velocity.y = 0;
+    }
+}
+```
+
+**Explosion effect:** 200-particle `THREE.Points` burst at crash site with additive blending, expanding outward, fading over 2 seconds.
+
+**Controls:**
+- **K** toggles collisions on/off for debugging
+- Collision state shown in debug overlay (`F5`)
+
+**Exports:** `resetAircraft()`, `getCollisionsEnabled()`, `setCollisionsEnabled(v)`, `isCrashed()`, `getCrashInfo()`, `onCrash(callback)`
+
+---
+
 ## **24/05/2026 — Aircraft Presets & Physics Profiling**
-**NEW:** Added two selectable aircraft presets — Cessna 172 (gentle trainer) and F-16 (high-thrust fighter). `setActiveAircraft(key)` swaps the active config mid-flight with optional state reset. `getAircraftPresetList()` + `getActiveAircraftKey()` exported for UI integration.
+**FEAT:** Added two selectable aircraft presets — Cessna 172 (gentle trainer) and F-16 (high-thrust fighter). `setActiveAircraft(key)` swaps the active config mid-flight with optional state reset. `getAircraftPresetList()` + `getActiveAircraftKey()` exported for UI integration.
 
 **Before:** Single hardcoded `AIRCRAFT` object (Cessna-172 parameters).
 

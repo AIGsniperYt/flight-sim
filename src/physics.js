@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { getHeight } from './terrain.js';
 
 const planeGeometry = new THREE.BoxGeometry(4, 1, 8);
 const planeMaterial = new THREE.MeshStandardMaterial({ color: 0xff3aae, metalness: 0.2, roughness: 0.6 });
@@ -28,6 +29,7 @@ function defineAircraft(config) {
     return {
         highAoADrag: 0.8,
         postStallFadeAngle: deg(35),
+        crashSpeed: 15,
         ...rest,
         controls: { ...DEFAULT_CONTROLS, ...controls }
     };
@@ -44,6 +46,7 @@ export const AIRCRAFT_PRESETS = {
         wingSpan: 10.9,
         sideArea: 5.2,
         maxThrust: 3600,
+        crashSpeed: 20,
         initialAltitude: 120,
         initialSpeed: 48,
         initialPitch: deg(4),
@@ -65,6 +68,7 @@ export const AIRCRAFT_PRESETS = {
         wingSpan: 10.0,
         sideArea: 16.0,
         maxThrust: 129000,
+        crashSpeed: 100,
         initialAltitude: 650,
         initialSpeed: 210,
         initialPitch: deg(2),
@@ -119,6 +123,11 @@ const debugArrowOrigin = new THREE.Vector3();
 
 let debugVectorArrowsVisible = true;
 let _physicsTime = 0;
+let _collisionsEnabled = true;
+let _crashed = false;
+let _crashPos = new THREE.Vector3();
+let _crashSpeed = 0;
+let _crashCallbacks = [];
 let debugReferenceArrowsVisible = false;
 const debugVectorArrows = {};
 const DEBUG_VECTOR_ARROW_CONFIGS = [
@@ -196,6 +205,8 @@ function syncFlightStateAircraft() {
 }
 
 function resetAircraftState() {
+    _crashed = false;
+    plane.visible = true;
     throttle = AIRCRAFT.initialThrottle ?? 1.0;
     plane.position.set(0, AIRCRAFT.initialAltitude, 0);
     plane.rotation.set(AIRCRAFT.initialPitch, 0, 0);
@@ -400,7 +411,19 @@ export function getPhysicsStats() {
     return { physicsTime: _physicsTime };
 }
 
+export function getCollisionsEnabled() { return _collisionsEnabled; }
+export function setCollisionsEnabled(v) { _collisionsEnabled = v; }
+export function isCrashed() { return _crashed; }
+export function getCrashInfo() { return { pos: _crashPos, speed: _crashSpeed }; }
+export function onCrash(fn) { _crashCallbacks.push(fn); }
+export function resetAircraft() {
+    _crashed = false;
+    plane.visible = true;
+    resetAircraftState();
+}
+
 export function updatePlane(dt) {
+    if (_crashed) { _physicsTime = 0; return; }
     const _start = performance.now();
     const pitchInput = (keyboard['KeyW'] ? 1 : 0) + (keyboard['KeyS'] ? -1 : 0);
     const rollInput  = (keyboard['KeyA'] ? 1 : 0) + (keyboard['KeyD'] ? -1 : 0);
@@ -484,9 +507,24 @@ export function updatePlane(dt) {
     velocity.addScaledVector(acceleration, dt);
     plane.position.addScaledVector(velocity, dt);
 
-    if (plane.position.y < 2) {
-        plane.position.y = 2;
-        if (velocity.y < 0) velocity.y = 0;
+    if (!_crashed) {
+        const impactSpeed = velocity.length();
+        const terrainY = getHeight(plane.position.x, plane.position.z);
+        if (plane.position.y < terrainY) {
+            if (_collisionsEnabled && impactSpeed >= AIRCRAFT.crashSpeed) {
+                _crashed = true;
+                _crashPos.copy(plane.position);
+                _crashSpeed = impactSpeed;
+                plane.visible = false;
+                for (const fn of _crashCallbacks) fn(_crashPos.clone(), _crashSpeed);
+            } else {
+                plane.position.y = terrainY;
+                if (velocity.y < 0) velocity.y = 0;
+            }
+        } else if (plane.position.y < 2) {
+            plane.position.y = 2;
+            if (velocity.y < 0) velocity.y = 0;
+        }
     }
 
     flightState.speed = speed;

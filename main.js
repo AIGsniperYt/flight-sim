@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { updateChunks, getChunkStats, toggleGapMode, getShowGaps } from './src/world.js';
+import { updateChunks, getChunkStats, toggleGapMode, getShowGaps, toggleWireframe, getWireframe } from './src/world.js';
 import { getTerrainColorAt, getTerrainStats } from './src/terrain.js';
 import {
     initPhysics,
@@ -11,6 +11,12 @@ import {
     getAircraftPresetList,
     getActiveAircraftKey,
     setActiveAircraft,
+    getCollisionsEnabled,
+    setCollisionsEnabled,
+    isCrashed,
+    getCrashInfo,
+    onCrash,
+    resetAircraft,
     getDebugVectorLegend,
     setDebugReferenceVectorsVisible,
     setDebugVectorsVisible
@@ -306,6 +312,12 @@ document.addEventListener('keydown', (event) => {
         const next = presets[(idx + 1) % presets.length].key;
         setActiveAircraft(next);
         console.log(`Switched to: ${next}`);
+    } else if (event.code === 'KeyK' && !event.ctrlKey && !event.metaKey) {
+        setCollisionsEnabled(!getCollisionsEnabled());
+        console.log(`Collisions: ${getCollisionsEnabled() ? 'ON' : 'OFF'}`);
+    } else if (event.code === 'KeyU' && !event.ctrlKey && !event.metaKey) {
+        const on = toggleWireframe();
+        console.log(`Wireframe: ${on ? 'ON' : 'OFF'}`);
     }
 });
 
@@ -350,7 +362,9 @@ function updateDebug(dt) {
         debugDiv.innerHTML = `
             <b>Debug Stats</b><br>
             Aircraft: ${getActiveAircraftKey()} &nbsp; <b>P</b> cycles<br>
+            Collisions: ${getCollisionsEnabled() ? 'ON' : 'OFF'} &nbsp; <b>K</b> toggles${isCrashed() ? ' <b>!! CRASHED !!</b>' : ''}<br>
             FPS: ${fps}<br>
+            Wireframe: ${getWireframe() ? 'ON' : 'OFF'} &nbsp; <b>U</b> toggles<br>
             Visible Chunks: ${stats.visibleChunks}/${stats.totalChunks}<br>
             <b>Processing</b><br>
             Chunk Gen: ${stats.chunkGenTime.toFixed(1)} ms &nbsp; +${stats.chunksAdded}/-${stats.chunksRemoved}<br>
@@ -513,6 +527,86 @@ function stopProfile() {
 }
 document.addEventListener('keydown', (e) => { if (e.code==='F8') { e.preventDefault(); PROFILE.active ? stopProfile() : startProfile(); } });
 
+// ---- crash explosion effect ----
+const EXPLOSION_DURATION = 2000;
+const EXPLOSION_PARTICLES = 200;
+let explosionStart = 0;
+let explosionMesh = null;
+let _respawning = false;
+
+function createExplosion(pos, speed) {
+    const geometry = new THREE.BufferGeometry();
+    const positions = new Float32Array(EXPLOSION_PARTICLES * 3);
+    const colors = new Float32Array(EXPLOSION_PARTICLES * 3);
+    const velocities = [];
+    const spread = 20 + speed * 0.3;
+    for (let i = 0; i < EXPLOSION_PARTICLES; i++) {
+        const i3 = i * 3;
+        positions[i3] = pos.x + (Math.random() - 0.5) * 4;
+        positions[i3 + 1] = pos.y + (Math.random() - 0.5) * 4;
+        positions[i3 + 2] = pos.z + (Math.random() - 0.5) * 4;
+        const brightness = 0.5 + Math.random() * 0.5;
+        colors[i3] = 1;
+        colors[i3 + 1] = 0.4 + Math.random() * 0.3;
+        colors[i3 + 2] = 0;
+        velocities.push(new THREE.Vector3(
+            (Math.random() - 0.5) * spread,
+            Math.random() * spread * 0.8,
+            (Math.random() - 0.5) * spread
+        ));
+    }
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+    const material = new THREE.PointsMaterial({
+        size: 3 + speed * 0.02,
+        vertexColors: true,
+        transparent: true,
+        opacity: 1,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false
+    });
+
+    if (explosionMesh) {
+        scene.remove(explosionMesh);
+        explosionMesh.geometry.dispose();
+        explosionMesh.material.dispose();
+    }
+    explosionMesh = new THREE.Points(geometry, material);
+    explosionMesh.userData.velocities = velocities;
+    scene.add(explosionMesh);
+    explosionStart = performance.now();
+}
+
+function updateExplosion() {
+    if (!explosionMesh) return;
+    const elapsed = performance.now() - explosionStart;
+    if (elapsed >= EXPLOSION_DURATION) {
+        scene.remove(explosionMesh);
+        explosionMesh.geometry.dispose();
+        explosionMesh.material.dispose();
+        explosionMesh = null;
+        return;
+    }
+    const progress = elapsed / EXPLOSION_DURATION;
+    const pos = explosionMesh.geometry.attributes.position;
+    const vel = explosionMesh.userData.velocities;
+    const dt = 1 / 60;
+    for (let i = 0; i < EXPLOSION_PARTICLES; i++) {
+        const i3 = i * 3;
+        pos.array[i3] += vel[i].x * dt;
+        pos.array[i3 + 1] += vel[i].y * dt;
+        pos.array[i3 + 2] += vel[i].z * dt;
+        vel[i].multiplyScalar(0.97);
+    }
+    pos.needsUpdate = true;
+    explosionMesh.material.opacity = 1 - progress;
+}
+
+onCrash((pos, speed) => {
+    createExplosion(pos, speed);
+});
+
 function animate() {
     requestAnimationFrame(animate);
 
@@ -535,6 +629,20 @@ function animate() {
     lastCameraPos.copy(camera.position);
 
     updateChunks(scene, camera, frustum, cameraVelocity.x, cameraVelocity.z);
+    updateExplosion();
+
+    if (isCrashed()) {
+        const elapsed = now - explosionStart;
+        if (explosionStart > 0 && elapsed > 3000 && !_respawning) {
+            _respawning = true;
+            resetAircraft();
+            console.log('Respawned');
+        } else if (!_respawning) {
+            _respawning = false;
+        }
+    } else {
+        _respawning = false;
+    }
 
     if (PROFILE.active) {
         PROFILE.fc++;
