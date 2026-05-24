@@ -12,36 +12,94 @@ const AIR_DENSITY_SEA_LEVEL = 1.225;
 const DENSITY_SCALE_HEIGHT = 8500;
 const GRAVITY = 9.81;
 
-const AIRCRAFT = {
-    // Cessna-172-ish values: light aircraft scale, not a 50g arcade jet.
-    mass: 1100,
-    wingArea: 16.2,
-    wingSpan: 10.9,
-    sideArea: 5.2,
-    maxThrust: 3600,
-    initialAltitude: 120,
-    initialSpeed: 48,
-    initialPitch: THREE.MathUtils.degToRad(4),
-    zeroLiftAoA: THREE.MathUtils.degToRad(-2),
-    stallAoA: THREE.MathUtils.degToRad(16),
-    clSlope: 5.5,
-    clMax: 1.45,
-    clMin: -1.1,
-    parasiteDrag: 0.032,
-    oswaldEfficiency: 0.8,
-    sideForceSlope: 1.4
+const deg = THREE.MathUtils.degToRad;
+
+const DEFAULT_CONTROLS = {
+    pitchSpeed: deg(55),
+    rollSpeed: deg(130),
+    yawSpeed: deg(45),
+    angularDamping: 2.0,
+    pitchStability: 0.35,
+    yawStability: 1.2
 };
 
-const aspectRatio = (AIRCRAFT.wingSpan * AIRCRAFT.wingSpan) / AIRCRAFT.wingArea;
-const inducedDragFactor = 1 / (Math.PI * aspectRatio * AIRCRAFT.oswaldEfficiency);
-const postStallFadeAngle = THREE.MathUtils.degToRad(35);
+function defineAircraft(config) {
+    const { controls, ...rest } = config;
+    return {
+        highAoADrag: 0.8,
+        postStallFadeAngle: deg(35),
+        ...rest,
+        controls: { ...DEFAULT_CONTROLS, ...controls }
+    };
+}
 
-const pitchSpeed = THREE.MathUtils.degToRad(55);
-const rollSpeed = THREE.MathUtils.degToRad(130);
-const yawSpeed = THREE.MathUtils.degToRad(45);
-const angularDamping = 2.0;
-const pitchStability = 0.35;
-const yawStability = 1.2;
+export const AIRCRAFT_PRESETS = {
+    // Add new aircraft by copying one preset and keeping values in SI units.
+    cessna172: defineAircraft({
+        key: 'cessna172',
+        name: 'Cessna 172 Skyhawk',
+        description: 'Light trainer/tourer tuned for gentle, low-speed handling.',
+        mass: 1100,
+        wingArea: 16.2,
+        wingSpan: 10.9,
+        sideArea: 5.2,
+        maxThrust: 3600,
+        initialAltitude: 120,
+        initialSpeed: 48,
+        initialPitch: deg(4),
+        zeroLiftAoA: deg(-2),
+        stallAoA: deg(16),
+        clSlope: 5.5,
+        clMax: 1.45,
+        clMin: -1.1,
+        parasiteDrag: 0.032,
+        oswaldEfficiency: 0.8,
+        sideForceSlope: 1.4
+    }),
+    f16: defineAircraft({
+        key: 'f16',
+        name: 'F-16 Fighting Falcon',
+        description: 'Modern fighter-style setup with high thrust, fast cruise, and sharper controls.',
+        mass: 12000,
+        wingArea: 27.9,
+        wingSpan: 10.0,
+        sideArea: 16.0,
+        maxThrust: 129000,
+        initialAltitude: 650,
+        initialSpeed: 210,
+        initialPitch: deg(2),
+        zeroLiftAoA: deg(-1),
+        stallAoA: deg(24),
+        clSlope: 3.9,
+        clMax: 1.25,
+        clMin: -0.9,
+        parasiteDrag: 0.021,
+        oswaldEfficiency: 0.62,
+        sideForceSlope: 2.4,
+        highAoADrag: 1.15,
+        postStallFadeAngle: deg(45),
+        controls: {
+            pitchSpeed: deg(95),
+            rollSpeed: deg(260),
+            yawSpeed: deg(70),
+            angularDamping: 2.6,
+            pitchStability: 0.22,
+            yawStability: 1.6
+        }
+    })
+};
+
+export const DEFAULT_AIRCRAFT_KEY = 'f16';
+
+function getStartupAircraftKey() {
+    if (typeof window === 'undefined') return DEFAULT_AIRCRAFT_KEY;
+    const requestedKey = (new URLSearchParams(window.location.search).get('aircraft') || '').trim().toLowerCase();
+    return AIRCRAFT_PRESETS[requestedKey] ? requestedKey : DEFAULT_AIRCRAFT_KEY;
+}
+
+let activeAircraftKey = getStartupAircraftKey();
+let AIRCRAFT = AIRCRAFT_PRESETS[activeAircraftKey];
+let aircraftMetrics = getAircraftMetrics(AIRCRAFT);
 
 const angVel = new THREE.Vector3(0, 0, 0);
 const forward = new THREE.Vector3();
@@ -60,6 +118,7 @@ const inverseQuaternion = new THREE.Quaternion();
 const debugArrowOrigin = new THREE.Vector3();
 
 let debugVectorArrowsVisible = true;
+let _physicsTime = 0;
 let debugReferenceArrowsVisible = false;
 const debugVectorArrows = {};
 const DEBUG_VECTOR_ARROW_CONFIGS = [
@@ -78,69 +137,118 @@ const DEBUG_VECTOR_ARROW_CONFIGS = [
     { key: 'velDir', label: 'Velocity Direction', color: 0x99ffff, scale: 6.0, minLength: 0.2, maxLength: 6, reference: true }
 ];
 
-const flightState = {
-    speed: 0,
-    throttle,
-    aoa: 0,
-    sideslip: 0,
-    pitch: 0,
-    bank: 0,
-    flightPathAngle: 0,
-    verticalSpeed: 0,
-    rho: AIR_DENSITY_SEA_LEVEL,
-    dynamicPressure: 0,
-    cl: 0,
-    linearCl: 0,
-    cd: 0,
-    parasiteCd: AIRCRAFT.parasiteDrag,
-    inducedCd: 0,
-    highAoACd: 0,
-    sideCoefficient: 0,
-    lift: 0,
-    drag: 0,
-    thrust: 0,
-    weight: AIRCRAFT.mass * GRAVITY,
-    sideForce: 0,
-    liftToWeight: 0,
-    thrustToDrag: 0,
-    stallSpeed: 0,
-    localVelocity: { x: 0, y: 0, z: 0 },
-    acceleration: { x: 0, y: 0, z: 0 },
-    totalForce: { x: 0, y: 0, z: 0 },
-    formulas: {
-        lift: '',
-        drag: '',
-        thrust: '',
-        weight: '',
-        sideForce: '',
-        acceleration: ''
-    },
-    constants: {
+function getAircraftMetrics(aircraft) {
+    const aspectRatio = (aircraft.wingSpan * aircraft.wingSpan) / aircraft.wingArea;
+    const inducedDragFactor = 1 / (Math.PI * aspectRatio * aircraft.oswaldEfficiency);
+
+    return {
+        aspectRatio,
+        inducedDragFactor
+    };
+}
+
+function getAircraftConstants() {
+    return {
+        key: activeAircraftKey,
+        name: AIRCRAFT.name,
         mass: AIRCRAFT.mass,
         wingArea: AIRCRAFT.wingArea,
         wingSpan: AIRCRAFT.wingSpan,
-        aspectRatio,
+        aspectRatio: aircraftMetrics.aspectRatio,
         clMax: AIRCRAFT.clMax,
         stallAoA: AIRCRAFT.stallAoA,
         zeroLiftAoA: AIRCRAFT.zeroLiftAoA,
-        inducedDragFactor,
+        inducedDragFactor: aircraftMetrics.inducedDragFactor,
         maxThrust: AIRCRAFT.maxThrust
-    },
+    };
+}
+
+const flightState = {
+    aircraft: { key: '', name: '', description: '' },
+    speed: 0, throttle, aoa: 0, sideslip: 0, pitch: 0, bank: 0,
+    flightPathAngle: 0, verticalSpeed: 0,
+    rho: AIR_DENSITY_SEA_LEVEL, dynamicPressure: 0,
+    cl: 0, linearCl: 0, cd: 0, parasiteCd: 0, inducedCd: 0, highAoACd: 0,
+    sideCoefficient: 0, lift: 0, drag: 0, thrust: 0, weight: 0, sideForce: 0,
+    liftToWeight: 0, thrustToDrag: 0, stallSpeed: 0,
+    localVelocity: { x: 0, y: 0, z: 0 },
+    acceleration: { x: 0, y: 0, z: 0 },
+    totalForce: { x: 0, y: 0, z: 0 },
+    formulas: { lift: '', drag: '', thrust: '', weight: '', sideForce: '', acceleration: '' },
+    constants: { key: '', name: '', mass: 0, wingArea: 0, wingSpan: 0, aspectRatio: 0, clMax: 0, stallAoA: 0, zeroLiftAoA: 0, inducedDragFactor: 0, maxThrust: 0 },
     stalled: false
 };
+syncFlightStateAircraft();
 
 const keyboard = {};
 
 const cameraOffset = new THREE.Vector3(0, 5, 18);
 
-export function initPhysics(scene) {
-    scene.add(plane);
-    initDebugVectorArrows(scene);
+function syncFlightStateAircraft() {
+    flightState.aircraft.key = activeAircraftKey;
+    flightState.aircraft.name = AIRCRAFT.name;
+    flightState.aircraft.description = AIRCRAFT.description;
+    flightState.constants = getAircraftConstants();
+    flightState.parasiteCd = AIRCRAFT.parasiteDrag;
+    flightState.weight = AIRCRAFT.mass * GRAVITY;
+    plane.userData.aircraftKey = activeAircraftKey;
+    plane.userData.aircraftName = AIRCRAFT.name;
+}
+
+function resetAircraftState() {
+    throttle = AIRCRAFT.initialThrottle ?? 1.0;
     plane.position.set(0, AIRCRAFT.initialAltitude, 0);
     plane.rotation.set(AIRCRAFT.initialPitch, 0, 0);
     velocity.set(0, 0, -AIRCRAFT.initialSpeed);
     acceleration.set(0, 0, 0);
     angVel.set(0, 0, 0);
+    syncFlightStateAircraft();
+}
+
+export function getAircraftPresetList() {
+    return Object.values(AIRCRAFT_PRESETS).map((aircraft) => ({
+        key: aircraft.key,
+        name: aircraft.name,
+        description: aircraft.description
+    }));
+}
+
+export function getActiveAircraftKey() {
+    return activeAircraftKey;
+}
+
+export function getActiveAircraft() {
+    return {
+        ...AIRCRAFT,
+        aspectRatio: aircraftMetrics.aspectRatio,
+        inducedDragFactor: aircraftMetrics.inducedDragFactor
+    };
+}
+
+export function setActiveAircraft(key, options = {}) {
+    const nextAircraft = AIRCRAFT_PRESETS[key];
+    if (!nextAircraft) {
+        console.warn(`Unknown aircraft preset "${key}". Available presets: ${Object.keys(AIRCRAFT_PRESETS).join(', ')}`);
+        return false;
+    }
+
+    activeAircraftKey = key;
+    AIRCRAFT = nextAircraft;
+    aircraftMetrics = getAircraftMetrics(AIRCRAFT);
+
+    if (options.reset === false) {
+        syncFlightStateAircraft();
+    } else {
+        resetAircraftState();
+    }
+
+    return true;
+}
+
+export function initPhysics(scene) {
+    scene.add(plane);
+    initDebugVectorArrows(scene);
+    resetAircraftState();
 
     document.addEventListener('keydown', (event) => keyboard[event.code] = true);
     document.addEventListener('keyup', (event) => keyboard[event.code] = false);
@@ -193,7 +301,7 @@ function getLiftCoefficient(aoa) {
 
     const sign = Math.sign(linearCl || aoa || 1);
     const stallCl = sign > 0 ? AIRCRAFT.clMax : AIRCRAFT.clMin;
-    const stallBlend = THREE.MathUtils.clamp((absAoA - AIRCRAFT.stallAoA) / postStallFadeAngle, 0, 1);
+    const stallBlend = THREE.MathUtils.clamp((absAoA - AIRCRAFT.stallAoA) / AIRCRAFT.postStallFadeAngle, 0, 1);
     const flatPlateCl = sign * 0.7 * Math.max(0, Math.sin(2 * absAoA));
 
     return {
@@ -205,8 +313,8 @@ function getLiftCoefficient(aoa) {
 
 function getDragBreakdown(cl, aoa) {
     const parasiteCd = AIRCRAFT.parasiteDrag;
-    const inducedCd = inducedDragFactor * cl * cl;
-    const highAoACd = 0.8 * Math.sin(aoa) * Math.sin(aoa);
+    const inducedCd = aircraftMetrics.inducedDragFactor * cl * cl;
+    const highAoACd = AIRCRAFT.highAoADrag * Math.sin(aoa) * Math.sin(aoa);
 
     return {
         parasiteCd,
@@ -288,25 +396,31 @@ export function getDebugVectorLegend() {
     }));
 }
 
+export function getPhysicsStats() {
+    return { physicsTime: _physicsTime };
+}
+
 export function updatePlane(dt) {
+    const _start = performance.now();
     const pitchInput = (keyboard['KeyW'] ? 1 : 0) + (keyboard['KeyS'] ? -1 : 0);
     const rollInput  = (keyboard['KeyA'] ? 1 : 0) + (keyboard['KeyD'] ? -1 : 0);
     const yawInput   = (keyboard['KeyQ'] ? 1 : 0) + (keyboard['KeyE'] ? -1 : 0);
     const throttleInput = (keyboard['ShiftLeft'] || keyboard['ShiftRight'] ? 1 : 0) +
         (keyboard['ControlLeft'] || keyboard['ControlRight'] ? -1 : 0);
+    const controls = AIRCRAFT.controls;
 
     throttle = THREE.MathUtils.clamp(throttle + throttleInput * dt, 0, 1);
 
-    const desiredPitch = pitchInput * pitchSpeed;
-    const desiredRoll  = rollInput  * rollSpeed;
-    const desiredYaw   = yawInput   * yawSpeed;
+    const desiredPitch = pitchInput * controls.pitchSpeed;
+    const desiredRoll  = rollInput  * controls.rollSpeed;
+    const desiredYaw   = yawInput   * controls.yawSpeed;
 
     const angBlend = Math.min(1, 8 * dt);
     angVel.x += (desiredPitch - angVel.x) * angBlend;
     angVel.y += (desiredYaw   - angVel.y) * angBlend;
     angVel.z += (desiredRoll  - angVel.z) * angBlend;
 
-    angVel.multiplyScalar(Math.max(0, 1 - angularDamping * dt));
+    angVel.multiplyScalar(Math.max(0, 1 - controls.angularDamping * dt));
 
     plane.rotateX(angVel.x * dt);
     plane.rotateY(angVel.y * dt);
@@ -331,8 +445,8 @@ export function updatePlane(dt) {
     const sideslip = Math.atan2(localVelocity.x, Math.max(0.001, forwardSpeed));
 
     if (speed > 5) {
-        if (pitchInput === 0) angVel.x += -aoa * pitchStability * dt;
-        if (yawInput === 0) angVel.y += -sideslip * yawStability * dt;
+        if (pitchInput === 0) angVel.x += -aoa * controls.pitchStability * dt;
+        if (yawInput === 0) angVel.y += -sideslip * controls.yawStability * dt;
     }
 
     const rho = getAirDensity(plane.position.y);
@@ -410,6 +524,7 @@ export function updatePlane(dt) {
     flightState.formulas.weight = `W = m*g = ${AIRCRAFT.mass.toFixed(0)}*${GRAVITY.toFixed(2)} = ${weightForce.toFixed(1)} N`;
     flightState.formulas.sideForce = `Y = q*Sside*CY = ${dynamicPressure.toFixed(1)}*${AIRCRAFT.sideArea.toFixed(1)}*${sideCoefficient.toFixed(3)} = ${sideForceMag.toFixed(1)} N`;
     flightState.formulas.acceleration = `a = F/m = (${totalForce.x.toFixed(1)}, ${totalForce.y.toFixed(1)}, ${totalForce.z.toFixed(1)})/${AIRCRAFT.mass.toFixed(0)} = (${acceleration.x.toFixed(2)}, ${acceleration.y.toFixed(2)}, ${acceleration.z.toFixed(2)}) m/s^2`;
+    _physicsTime = performance.now() - _start;
     updateDebugVectorArrows();
 }
 

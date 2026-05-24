@@ -294,6 +294,7 @@ function addChunkToBucket(scene, chunkX, chunkZ, lod) {
 
     const config = LOD_CONFIGS[lod];
     const step = config.step;
+    const lodScale = config.scale;
     const maxCoord = showGaps ? CHUNK_SIZE - 1 : CHUNK_SIZE;
 
     let idx = slot * bucket.vertsPerChunk;

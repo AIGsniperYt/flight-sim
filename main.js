@@ -7,6 +7,10 @@ import {
     updatePlane,
     getPlane,
     getFlightState,
+    getPhysicsStats,
+    getAircraftPresetList,
+    getActiveAircraftKey,
+    setActiveAircraft,
     getDebugVectorLegend,
     setDebugReferenceVectorsVisible,
     setDebugVectorsVisible
@@ -295,6 +299,13 @@ document.addEventListener('keydown', (event) => {
         resetChaseCamera();
     } else if (event.code === 'KeyJ' && !event.ctrlKey && !event.metaKey) {
         toggleGapMode(scene);
+    } else if (event.code === 'KeyP' && !event.ctrlKey && !event.metaKey) {
+        const presets = getAircraftPresetList();
+        const current = getActiveAircraftKey();
+        const idx = presets.findIndex(p => p.key === current);
+        const next = presets[(idx + 1) % presets.length].key;
+        setActiveAircraft(next);
+        console.log(`Switched to: ${next}`);
     }
 });
 
@@ -338,10 +349,12 @@ function updateDebug(dt) {
         const flight = getFlightState();
         debugDiv.innerHTML = `
             <b>Debug Stats</b><br>
+            Aircraft: ${getActiveAircraftKey()} &nbsp; <b>P</b> cycles<br>
             FPS: ${fps}<br>
             Visible Chunks: ${stats.visibleChunks}/${stats.totalChunks}<br>
             <b>Processing</b><br>
             Chunk Gen: ${stats.chunkGenTime.toFixed(1)} ms &nbsp; +${stats.chunksAdded}/-${stats.chunksRemoved}<br>
+            Physics: ${getPhysicsStats().physicsTime.toFixed(2)} ms<br>
             Terrain Cache: ${(function(){ const t=getTerrainStats(); return `${t.tiles} tiles &nbsp; ${t.tileHits}H/${t.tileMisses}M &nbsp; gen:${t.tilesGenerated} evict:${t.tileEvictions}`; })()}<br>
             Chunks: ${getShowGaps() ? 'GAPPED (dev)' : 'SEAMLESS'} <b>J</b> toggles<br>
             Camera Mode: ${cameraMode}<br>
@@ -479,6 +492,27 @@ function updateOrbitCamera() {
 const lastCameraPos = new THREE.Vector3();
 const cameraVelocity = new THREE.Vector3();
 
+// ---- profiler ----
+const PROFILE = { active: false, samples: [], fc: 0, fsum: 0, gsum: 0, psum: 0, asum: 0, rsum: 0, t0: 0, maxFrames: 900, sampleEvery: 60 };
+function startProfile() {
+    PROFILE.active = true; PROFILE.samples = []; PROFILE.fc = 0; PROFILE.fsum = 0; PROFILE.gsum = 0; PROFILE.psum = 0; PROFILE.asum = 0; PROFILE.rsum = 0; PROFILE.t0 = performance.now();
+    console.log('=== PROFILE START ===');
+}
+function stopProfile() {
+    PROFILE.active = false;
+    console.log('=== PROFILE STOP ===');
+    if (!PROFILE.samples.length) return;
+    const n = PROFILE.samples.length;
+    const avg = k => PROFILE.samples.reduce((a,b)=>a+b[k],0)/n;
+    const sum = k => PROFILE.samples.reduce((a,b)=>a+b[k],0);
+    const last = PROFILE.samples[n-1];
+    console.log('=== SUMMARY (per-sample avg where each sample = ~1s) ===');
+    console.log(['avgFPS','avgGen(ms)','avgPhys(ms)','+chunks/s','-chunks/s','endChunks','endVisible','peakChunks','avgTileHits/s','avgTileMisses/s','totalTilesGen','totalTilesEvict','endMem(MB)'].join(','));
+    console.log([avg('fps').toFixed(1), avg('gen').toFixed(2), avg('phy').toFixed(3), sum('ads').toFixed(0), sum('rem').toFixed(0), last.tch, last.vch, Math.max(...PROFILE.samples.map(s=>s.tch)), avg('th').toFixed(0), avg('tm').toFixed(0), last.tg, last.te, last.mem].join(','));
+    console.log('Elapsed:', ((performance.now()-PROFILE.t0)/1000).toFixed(1)+'s');
+}
+document.addEventListener('keydown', (e) => { if (e.code==='F8') { e.preventDefault(); PROFILE.active ? stopProfile() : startProfile(); } });
+
 function animate() {
     requestAnimationFrame(animate);
 
@@ -501,6 +535,39 @@ function animate() {
     lastCameraPos.copy(camera.position);
 
     updateChunks(scene, camera, frustum, cameraVelocity.x, cameraVelocity.z);
+
+    if (PROFILE.active) {
+        PROFILE.fc++;
+        const s = getChunkStats();
+        PROFILE.fsum += 1 / (dt || 1/60);
+        PROFILE.gsum += s.chunkGenTime;
+        PROFILE.asum += s.chunksAdded;
+        PROFILE.rsum += s.chunksRemoved;
+
+        const ps = getPhysicsStats();
+        PROFILE.psum += ps.physicsTime;
+
+        if (PROFILE.fc % PROFILE.sampleEvery === 0) {
+            const ts = getTerrainStats();
+            const smp = {
+                fps: PROFILE.fsum / PROFILE.sampleEvery,
+                gen: PROFILE.gsum,
+                phy: PROFILE.psum,
+                ads: PROFILE.asum,
+                rem: PROFILE.rsum,
+                tch: s.totalChunks,
+                vch: s.visibleChunks,
+                th: ts.tileHits, tm: ts.tileMisses, tg: ts.tilesGenerated, te: ts.tileEvictions,
+                mem: performance.memory ? +(performance.memory.usedJSHeapSize / 1048576).toFixed(1) : 0
+            };
+            PROFILE.samples.push(smp);
+            console.log(`S${PROFILE.samples.length-1}: ${smp.fps.toFixed(0)}fps gen=${smp.gen.toFixed(2)}ms phys=${smp.phy.toFixed(2)}ms +${smp.ads}/-${smp.rem} vis=${smp.vch}/${smp.tch} tiles=${ts.tiles}(${smp.th}H/${smp.tm}M/${smp.tg}G/${smp.te}E) mem=${smp.mem}MB`);
+            PROFILE.fsum = 0; PROFILE.gsum = 0; PROFILE.psum = 0; PROFILE.asum = 0; PROFILE.rsum = 0;
+        }
+
+        if (PROFILE.fc >= PROFILE.maxFrames) stopProfile();
+    }
+
     updateDebug(dt * 1000);
     updateFlightInstrument();
     drawMinimap(now);

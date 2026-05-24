@@ -1,4 +1,61 @@
 # Changelog
+## **24/05/2026 — Aircraft Presets & Physics Profiling**
+**NEW:** Added two selectable aircraft presets — Cessna 172 (gentle trainer) and F-16 (high-thrust fighter). `setActiveAircraft(key)` swaps the active config mid-flight with optional state reset. `getAircraftPresetList()` + `getActiveAircraftKey()` exported for UI integration.
+
+**Before:** Single hardcoded `AIRCRAFT` object (Cessna-172 parameters).
+
+**After:**
+```js
+export const AIRCRAFT_PRESETS = {
+    cessna172: defineAircraft({ mass: 1100, wingArea: 16.2, maxThrust: 3600, ... }),
+    f16: defineAircraft({ mass: 12000, wingArea: 27.9, maxThrust: 129000, ... })
+};
+```
+- `defineAircraft(config)` merges config with defaults (highAoADrag, postStallFadeAngle, controls)
+- Aircraft key read from `?aircraft=f16` URL param, defaults to `f16`
+- **P key** cycles presets in-game
+- Aircraft name shown in debug overlay
+- `?aircraft=f16` or `?aircraft=cessna172` via URL
+
+**NEW:** Added physics timing (`_physicsTime`) to `updatePlane()`, exported via `getPhysicsStats()`. Integrated into F8 profiler (per-sample `phys=X.XXms`) and debug overlay. Summary row now includes `avgPhys(ms)` column.
+
+---
+
+## **24/05/2026 — Profiling, Benchmark & Frustum Culling Fix**
+
+### **Frustum Culling — Quadrant Limitation Accepted**
+**FIX:** Attempted per-chunk bounding boxes via `getHeightScaled` terrain sampling for frustum culling. After testing three approaches (per-vertex, sparse-11×11, sparse-6×6), all showed 100% visibility. Root cause: merged geometry buckets union all active chunk bounding boxes into a single quadrant-level box — individual chunk tightness is irrelevant. Reverted to flat `maxPossibleHeight` bbox. Culling only hides empty buckets (no active chunks in that quadrant+LOD). The 12 merged draw calls are handled efficiently by the GPU.
+
+**Before:**
+```js
+const maxPossibleHeight = 20.0 * (0.2 + 0.1 + 4.0);
+const bbox = new THREE.Box3(
+    new THREE.Vector3(chunkX * CHUNK_SIZE, -10, chunkZ * CHUNK_SIZE),
+    new THREE.Vector3((chunkX + 1) * CHUNK_SIZE, maxPossibleHeight + 10, ...)
+);
+```
+
+**After:**
+```js
+let minY = Infinity, maxY = -Infinity;
+// ... during vertex loop:
+const y = getHeightScaled(worldX, worldZ, lodScale);
+if (y < minY) minY = y;
+if (y > maxY) maxY = y;
+const bbox = new THREE.Box3(
+    new THREE.Vector3(chunkX * CHUNK_SIZE, minY - 10, ...),
+    new THREE.Vector3((chunkX + 1) * CHUNK_SIZE, maxY + 10, ...)
+);
+```
+
+### **F8 Profiler (Console)**
+**OPT:** Added F8 key to start/stop a console profiler. Collects per-frame metrics (FPS, chunk gen time, adds/removes, tile cache stats) sampled every ~60 frames (~1s). Runs for 900 frames (~15s) then auto-stops. Outputs per-sample lines and a CSV summary row for easy copy-paste comparison. Specifically focuses on terrain generation, but physics profiling is done too, as a single time profile.
+
+### **Performance Benchmark File**
+**DOC:** Created `benchmark.md` with before/after profiling data comparing baseline (commit `8da2587`, pre-optimisations) vs current GPU terrain. Includes raw data from both runs, explanation of each system, and a comparison table.
+
+---
+
 ## **24/05/2026 — GPU Terrain, Predictive Loading & Processing Metrics**
 
 ### **Processing Profiling Metrics**
