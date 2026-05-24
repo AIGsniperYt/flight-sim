@@ -1,5 +1,5 @@
 const TILE_SIZE = 50;
-const MAX_TILES = 2000;
+const MAX_TILES = 4000;
 
 const heightScale = 20;
 const baseScale = 0.02;
@@ -103,7 +103,7 @@ export function getHeight(worldX, worldZ) {
     if (!tile) {
         _tileMisses++;
         if (tiles.size >= MAX_TILES) {
-            const toEvict = MAX_TILES >> 2;
+            const toEvict = MAX_TILES >> 3;
             let evicted = 0;
             for (const k of tiles.keys()) {
                 if (evicted >= toEvict) break;

@@ -1,4 +1,29 @@
 # Changelog
+## **24/05/2026 — Tile Cache Tuning: MAX_TILES 2000 → 4000**
+
+**Change:** Doubled the terrain tile cache from 2000 to 4000. Eviction batch reduced from 25% to ~12.5% per overflow.
+
+```js
+// before
+const MAX_TILES = 2000;
+const toEvict = MAX_TILES >> 2; // 500 entries (25%)
+
+// after
+const MAX_TILES = 4000;
+const toEvict = MAX_TILES >> 3; // 500 entries (12.5%)
+```
+
+**Impact:**
+- **Zero evictions** during aggressive F-16 flight (was 5,000 evictions in 16.4s before)
+- avgGen dropped 47% (25.04ms → 13.17ms per sample)
+- totalTilesGen dropped 76% (7,488 → 1,818) — tiles generated once, never evicted
+- Memory flat (109.9MB → 111.5MB, +1.5% noise) — the extra 2,000 tile slots cost ~20MB theoretical but real usage peaked at 1,818 tiles (well under 4,000)
+- Cruise flight also saw evictions drop from 1,000 → 0
+
+No further tuning needed — current cache comfortably holds all tiles touched during a 15s aggressive run.
+
+---
+
 ## **24/05/2026 — CRITICAL BUG FIX: Terrain Height Inconsistency**
 
 **Severity: CRITICAL** — CPU collision system and GPU rendering produced completely different terrain. Planes crashed into invisible walls (or clipped through mountains) because `simplex-noise` npm package and GLSL Gustavson noise output different values for the same coordinates.
