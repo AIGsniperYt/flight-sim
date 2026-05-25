@@ -1,4 +1,72 @@
 # Changelog
+## **25/05/2026 — Frustum Culling (Scan-Level) with Per-LOD Bounds**
+
+**Change:** Two-part frustum culling in `world.js`:
+
+1. **Scan-level culling** — chunk scanner tests each candidate against the camera frustum before adding. Chunks behind the camera or outside the view cone are skipped entirely. This is the primary savings: invisible chunks never reach the merged mesh.
+
+2. **Per-LOD conservative bounds** — each chunk's bounding box uses the theoretical height range for its LOD, not the old flat `maxPossibleHeight=86` for everything:
+   - near: `[-10, 90]` (full terrain range)
+   - mid: `[-5, 45]` (half scale)
+   - far: `[-2, 10]` (tenth scale — tight, many far quadrants get culled)
+
+**What was tried first and reverted:** Sampling every vertex via `getHeight()` in `addChunkToBucket` for per-chunk tight bboxes. Caused the same tile cache thrashing as the CPU-height regression (17,762 tiles gen, 14,000 evicted in 23.8s). Not worth it — the scan-level culling does the heavy lifting.
+
+```js
+// scanner: skip chunks outside frustum
+_frustumBBox.min.set(x * CHUNK_SIZE, -200, z * CHUNK_SIZE);
+_frustumBBox.max.set((x + 1) * CHUNK_SIZE, 200, (z + 1) * CHUNK_SIZE);
+if (!frustum.intersectsBox(_frustumBBox)) continue;
+
+// addChunkToBucket: per-LOD bounds, no getHeight calls
+const range = LOD_HEIGHT_RANGES[lod];
+const bbox = new THREE.Box3(
+    new THREE.Vector3(chunkX * CHUNK_SIZE, range.min, chunkZ * CHUNK_SIZE),
+    new THREE.Vector3((chunkX + 1) * CHUNK_SIZE, range.max, (chunkZ + 1) * CHUNK_SIZE)
+);
+```
+
+**Update previous entry merging this into the single frustum culling record.**
+
+---
+
+## **25/05/2026 — Investigated Greedy Meshing & Face Culling for Terrain**
+
+**Assessment:** Both ideas are voxel/block-world techniques. Neither applies to heightmap terrain.
+
+**Greedy meshing** — merges coplanar adjacent faces into larger quads (Minecraft's stone cubes → big slabs). In our terrain, every adjacent triangle has a different height from noise → never coplanar. Zero faces to merge. Index buffer already optimal (shared vertices via `getIndicesForLOD`).
+
+**Face culling by camera direction** — relies on discrete 6-face cubes where back/hidden faces are predetermined. In a continuous heightfield, every triangle face can face any direction and be visible from any angle. THREE.js already does GPU back-face culling per triangle, which is optimal.
+
+**Verdict:** Focus shifted to re-enabling per-chunk frustum culling with tight AABBs — our biggest remaining lever to cut vertex count at CHUNK_SIZE=100.
+
+---
+
+## **25/05/2026 — Stress Test: CHUNK_SIZE 50 → 100**
+
+**Change:** Doubled `CHUNK_SIZE` in `world.js:50` from 50 to 100. Near LOD now has 10,000 verts/chunk (was 2,500), mid 400 (was 100), far 100 (was 25). Total frame vertex count jumped from ~484K to ~1.885M.
+
+**Impact:**
+- **Auto-cruise: 66.7fps** — no visible impact at steady flight
+- **Active flight: 36.6fps** — `avgPhys` nearly doubled from 3.99ms → 6.79ms, GPU vertex-bound
+- Memory tripled: ~112MB → ~307MB (vertex buffer pool scaled with chunk size)
+- Zero tile evictions at both profiles (MAX_TILES=4000 holds)
+- Gen time unaffected (CPU job, scales with chunk count not vertex count)
+
+**Status:** CHUNK_SIZE=100 kept as new baseline for optimisation stress testing.
+
+```js
+// before
+const CHUNK_SIZE = 50;
+// near: 50×50 = 2500 verts, mid: 10×10 = 100, far: 5×5 = 25
+
+// after
+const CHUNK_SIZE = 100;
+// near: 100×100 = 10000 verts, mid: 20×20 = 400, far: 10×10 = 100
+```
+
+---
+
 ## **24/05/2026 — Tile Cache Tuning: MAX_TILES 2000 → 4000**
 
 **Change:** Doubled the terrain tile cache from 2000 to 4000. Eviction batch reduced from 25% to ~12.5% per overflow.

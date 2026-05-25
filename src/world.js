@@ -63,6 +63,12 @@ const LOD_CONFIGS = {
 
 const QUADRANTS = ['NE', 'NW', 'SE', 'SW'];
 
+const LOD_HEIGHT_RANGES = {
+    near: { min: -10, max: 90 },
+    mid: { min: -5, max: 45 },
+    far: { min: -2, max: 10 }
+};
+
 const mergedMeshes = { near: {}, mid: {}, far: {} };
 const globalChunks = new Map();
 const precomputedIndices = {};
@@ -73,6 +79,7 @@ const _toAdd = [];
 const _toRemove = [];
 let _chunkGenTime = 0, _chunksAdded = 0, _chunksRemoved = 0;
 const _terrainMaterials = [];
+const _frustumBBox = new THREE.Box3();
 
 export function toggleWireframe() {
     const on = !_terrainMaterials[0]?.wireframe;
@@ -327,10 +334,10 @@ function addChunkToBucket(scene, chunkX, chunkZ, lod) {
     bucket.dirty = true;
     bucket.changed = true;
 
-    const maxPossibleHeight = 20.0 * (0.2 + 0.1 + 4.0);
+    const range = LOD_HEIGHT_RANGES[lod];
     const bbox = new THREE.Box3(
-        new THREE.Vector3(chunkX * CHUNK_SIZE, -10, chunkZ * CHUNK_SIZE),
-        new THREE.Vector3((chunkX + 1) * CHUNK_SIZE, maxPossibleHeight + 10, (chunkZ + 1) * CHUNK_SIZE)
+        new THREE.Vector3(chunkX * CHUNK_SIZE, range.min, chunkZ * CHUNK_SIZE),
+        new THREE.Vector3((chunkX + 1) * CHUNK_SIZE, range.max, (chunkZ + 1) * CHUNK_SIZE)
     );
 
     const chunkKey = `${chunkX},${chunkZ}`;
@@ -393,6 +400,10 @@ export function updateChunks(scene, camera, frustum, vx = 0, vz = 0) {
                 let lod = "far";
                 if (dx <= RENDER_DISTANCE_NEAR && dz <= RENDER_DISTANCE_NEAR) lod = "near";
                 else if (dx <= RENDER_DISTANCE_MID && dz <= RENDER_DISTANCE_MID) lod = "mid";
+
+                _frustumBBox.min.set(x * CHUNK_SIZE, -200, z * CHUNK_SIZE);
+                _frustumBBox.max.set((x + 1) * CHUNK_SIZE, 200, (z + 1) * CHUNK_SIZE);
+                if (!frustum.intersectsBox(_frustumBBox)) continue;
 
                 const chunkKey = `${x},${z},${lod}`;
                 _newActive.add(chunkKey);

@@ -273,7 +273,81 @@ avgFPS   avgGen(ms)  +/s    -/s    endChunks  endVisible  peakChunks  avgTileHit
 
 ---
 
-## Comparison Summary
+## Stress Test: CHUNK_SIZE 50 → 100
+
+**Description:** Doubled CHUNK_SIZE from 50 to 100 to push the system toward target visual quality. Each chunk now holds 4× the vertices (near: 2,500→10,000, mid: 100→400, far: 25→100), total estimated vertex count jumps from ~484K to ~1.885M per frame. Terrain tile cache (`TILE_SIZE=50`) and collision system unaffected — only rendering resolution increased.
+
+Wanted to see how well the optimisations hold up under real visual load.
+
+### Run 1 — Auto-cruise (no controls, steady flight)
+
+```
+=== PROFILE START ===
+S0: 70fps gen=6.60ms phys=5.30ms +246/-246 vis=1919/2703 tiles=756(5H/0M/1116G/0E) mem=306.7MB
+S1: 65fps gen=8.60ms phys=3.60ms +369/-369 vis=2072/2703 tiles=864(36834H/36M/1224G/0E) mem=294.3MB
+S2: 70fps gen=14.80ms phys=4.40ms +369/-369 vis=2225/2703 tiles=954(36850H/18M/1314G/0E) mem=301.8MB
+S3: 70fps gen=7.00ms phys=5.40ms +369/-369 vis=2378/2703 tiles=1062(36853H/18M/1422G/0E) mem=317.7MB
+S4: 77fps gen=12.80ms phys=4.10ms +369/-369 vis=2531/2703 tiles=1170(36851H/18M/1530G/0E) mem=305.2MB
+S5: 59fps gen=10.70ms phys=5.50ms +369/-369 vis=2582/2703 tiles=1278(7H/0M/1638G/0E) mem=321.2MB
+S6: 64fps gen=8.50ms phys=4.90ms +369/-369 vis=2582/2703 tiles=1386(5H/0M/1746G/0E) mem=308.5MB
+S7: 62fps gen=11.20ms phys=5.30ms +369/-369 vis=2582/2703 tiles=1512(5H/0M/1872G/0E) mem=304.4MB
+S8: 65fps gen=11.10ms phys=3.40ms +492/-492 vis=2582/2703 tiles=1620(2H/0M/1980G/0E) mem=320.8MB
+S9: 58fps gen=19.70ms phys=3.60ms +369/-369 vis=2582/2703 tiles=1746(4H/0M/2106G/0E) mem=314MB
+S10: 68fps gen=11.80ms phys=2.50ms +492/-492 vis=2582/2703 tiles=1872(3H/0M/2232G/0E) mem=310.4MB
+S11: 70fps gen=8.50ms phys=3.30ms +369/-369 vis=2582/2703 tiles=1998(3H/0M/2358G/0E) mem=324MB
+S12: 78fps gen=13.80ms phys=2.30ms +492/-492 vis=2582/2703 tiles=2124(36840H/36M/2484G/0E) mem=318MB
+S13: 63fps gen=18.10ms phys=3.00ms +492/-492 vis=2582/2703 tiles=2250(3H/0M/2610G/0E) mem=310.7MB
+S14: 61fps gen=11.50ms phys=3.30ms +492/-492 vis=2582/2703 tiles=2430(36833H/36M/2790G/0E) mem=307.2MB
+=== PROFILE STOP ===
+
+avgFPS  avgGen(ms)  avgPhys(ms)  +/s   -/s   endChunks  endVisible  peakChunks  avgTileHits/s  avgTileMisses/s  totalTilesGen  totalTilesEvict  endMem(MB)
+66.7    11.65       3.993        6027  6027  2703       2582        2703        14740          11               2790           0                307.2
+```
+
+**Notes:**
+- FPS stable at 66.7 — 4× vertex count didn't impact GPU at steady cruise
+- Memory tripled from ~112MB to ~307MB — vertex buffer pool scaled with chunk size
+- Gen time in line with prior run (~11.65ms vs ~13-17ms) — chunk gen is CPU-bound, unaffected by vertex count
+- Zero evictions (2790 tiles live at end, well under 4000 max)
+- **Slightly deceptive — auto-cruise doesn't exercise chunk turnover or physics stress**
+
+### Run 2 — Active flight (full controls, maneuvering)
+
+```
+=== PROFILE START ===
+S0: 52fps gen=30.60ms phys=6.40ms +1079/-973 vis=2012/2809 tiles=759(36832H/36M/759G/0E) mem=299.5MB
+S1: 32fps gen=23.70ms phys=6.90ms +625/-625 vis=2279/2809 tiles=965(1H/0M/965G/0E) mem=298.6MB
+S2: 44fps gen=27.90ms phys=7.60ms +727/-727 vis=2425/2809 tiles=1107(1H/0M/1107G/0E) mem=306.6MB
+S3: 33fps gen=17.90ms phys=6.50ms +375/-375 vis=2597/2809 tiles=1253(36868H/0M/1253G/0E) mem=305.9MB
+S4: 35fps gen=22.60ms phys=7.50ms +500/-500 vis=2809/2809 tiles=1402(1H/0M/1402G/0E) mem=287.1MB
+S5: 26fps gen=14.10ms phys=8.30ms +250/-250 vis=2809/2809 tiles=1497(36850H/19M/1497G/0E) mem=295.8MB
+S6: 31fps gen=8.80ms phys=6.70ms +354/-354 vis=2809/2809 tiles=1534(4H/0M/1534G/0E) mem=297.3MB
+S7: 30fps gen=6.20ms phys=6.00ms +229/-229 vis=2787/2809 tiles=1572(3H/0M/1572G/0E) mem=298.7MB
+S8: 34fps gen=7.80ms phys=7.70ms +125/-125 vis=2787/2809 tiles=1610(2H/0M/1610G/0E) mem=296.8MB
+S9: 33fps gen=4.80ms phys=6.20ms +123/-229 vis=2681/2703 tiles=1685(1H/0M/1685G/0E) mem=311.3MB
+S10: 31fps gen=6.90ms phys=7.30ms +352/-352 vis=2681/2703 tiles=1742(36868H/0M/1742G/0E) mem=293MB
+S11: 36fps gen=9.70ms phys=6.20ms +356/-250 vis=2798/2809 tiles=1817(1H/0M/1817G/0E) mem=309.2MB
+S12: 50fps gen=14.40ms phys=6.30ms +352/-352 vis=1696/2809 tiles=1911(3H/0M/1911G/0E) mem=311MB
+S13: 42fps gen=13.90ms phys=6.20ms +375/-375 vis=2809/2809 tiles=2005(1H/0M/2005G/0E) mem=299.8MB
+S14: 41fps gen=10.20ms phys=6.00ms +250/-250 vis=2809/2809 tiles=2061(36851H/19M/2061G/0E) mem=309.7MB
+=== PROFILE STOP ===
+
+avgFPS  avgGen(ms)  avgPhys(ms)  +/s   -/s   endChunks  endVisible  peakChunks  avgTileHits/s  avgTileMisses/s  totalTilesGen  totalTilesEvict  endMem(MB)
+36.6    14.63       6.787        6072  5966  2809       2809        2809        12286          5                2061           0                309.7
+```
+
+**Notes:**
+- **FPS halved: 66.7 → 36.6** — active flight stresses GPU via rapid chunk turnover
+- `peakChunks` hit 2809 (maxChunks caps were hit: merged meshes overflowed to an extra batch — mid/far likely exceeded their caps)
+- Gen time barely changed (~14.6ms vs ~11.6ms) — CPU chunk gen is not the bottleneck
+- **Physics time nearly doubled** (3.99ms → 6.79ms) — likely from CPU cache pressure and GC overhead with 3× memory working set, not physics computation changes
+- Memory stable at ~300MB across both runs — no leak, the vertex buffer pools just hold 4× the data
+
+**Diagnosis:** GPU vertex throughput is the bottleneck. At 1.885M verts/frame with 12 draw calls, the GPU spends ~17ms on vertex processing alone (36fps = 27ms frame budget; gen=14.6ms spread across frames ≈ 0.24ms/frame; phys=6.8ms; remaining ~20ms is GPU vertex + fragment). Fragment shading is cheap (flat shading, no textures). The culprit is vertex shader invocations × 4.
+
+**Takeaway:** CHUNK_SIZE=100 exposes real bottlenecks that were invisible at CHUNK_SIZE=50. Any optimisation that recovers FPS at this setting is a genuine win. This is now the baseline for further optimisation.
+
+---
 
 > **Reading left to right = chronological.**
 > **Direction indicators:** `↑` higher is better, `↓` lower is better, `—` neutral/informational.
