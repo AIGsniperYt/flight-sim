@@ -1,4 +1,25 @@
 # Changelog
+## **25/05/2026 — BUG FIX: Chunk Pop-In During Camera Rotation**
+
+**Severity: MAJOR** — frustum culling was too aggressive. Chunks behind the camera were fully unloaded. When the camera turned, they needed to be generated from scratch, causing visible pop-in that broke immersion.
+
+**Fix:** Added `FRUSTUM_MARGIN = CHUNK_SIZE * 2` (100 world units) to the frustum test bounding box in the chunk scanner. Chunks within 2 chunk-widths of the frustum edge remain loaded, ready for seamless rotation.
+
+```js
+// before: exact frustum test → pop-in on turn
+_frustumBBox.min.set(x * CHUNK_SIZE, -200, z * CHUNK_SIZE);
+_frustumBBox.max.set((x + 1) * CHUNK_SIZE, 200, (z + 1) * CHUNK_SIZE);
+
+// after: expanded test → chunks pre-loaded at edges
+const FRUSTUM_MARGIN = CHUNK_SIZE * 2;
+_frustumBBox.min.set(x * CHUNK_SIZE - FRUSTUM_MARGIN, -200, z * CHUNK_SIZE - FRUSTUM_MARGIN);
+_frustumBBox.max.set((x + 1) * CHUNK_SIZE + FRUSTUM_MARGIN, 200, (z + 1) * CHUNK_SIZE + FRUSTUM_MARGIN);
+```
+
+Also reverted `CHUNK_SIZE` back to 50 to return to the current flagship configuration.
+
+---
+
 ## **25/05/2026 — Frustum Culling (Scan-Level) with Per-LOD Bounds**
 
 **Change:** Two-part frustum culling in `world.js`:

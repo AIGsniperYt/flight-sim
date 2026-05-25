@@ -68,6 +68,7 @@ const LOD_HEIGHT_RANGES = {
     mid: { min: -5, max: 45 },
     far: { min: -2, max: 10 }
 };
+const FRUSTUM_MARGIN = CHUNK_SIZE * 2;
 
 const mergedMeshes = { near: {}, mid: {}, far: {} };
 const globalChunks = new Map();
@@ -401,8 +402,8 @@ export function updateChunks(scene, camera, frustum, vx = 0, vz = 0) {
                 if (dx <= RENDER_DISTANCE_NEAR && dz <= RENDER_DISTANCE_NEAR) lod = "near";
                 else if (dx <= RENDER_DISTANCE_MID && dz <= RENDER_DISTANCE_MID) lod = "mid";
 
-                _frustumBBox.min.set(x * CHUNK_SIZE, -200, z * CHUNK_SIZE);
-                _frustumBBox.max.set((x + 1) * CHUNK_SIZE, 200, (z + 1) * CHUNK_SIZE);
+                _frustumBBox.min.set(x * CHUNK_SIZE - FRUSTUM_MARGIN, -200, z * CHUNK_SIZE - FRUSTUM_MARGIN);
+                _frustumBBox.max.set((x + 1) * CHUNK_SIZE + FRUSTUM_MARGIN, 200, (z + 1) * CHUNK_SIZE + FRUSTUM_MARGIN);
                 if (!frustum.intersectsBox(_frustumBBox)) continue;
 
                 const chunkKey = `${x},${z},${lod}`;
