@@ -24,7 +24,7 @@ import {
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x87ceeb);
-scene.fog = new THREE.FogExp2(0x87ceeb, 0.0005);
+scene.fog = new THREE.FogExp2(0x87ceeb, 0.0004);
 
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 100000);
 camera.position.y = 10;
@@ -507,9 +507,9 @@ const lastCameraPos = new THREE.Vector3();
 const cameraVelocity = new THREE.Vector3();
 
 // ---- profiler ----
-const PROFILE = { active: false, samples: [], fc: 0, fsum: 0, gsum: 0, psum: 0, asum: 0, rsum: 0, t0: 0, maxFrames: 900, sampleEvery: 60 };
+const PROFILE = { active: false, samples: [], fc: 0, ftotal: 0, gsum: 0, psum: 0, asum: 0, rsum: 0, t0: 0, maxFrames: 900, sampleEvery: 60 };
 function startProfile() {
-    PROFILE.active = true; PROFILE.samples = []; PROFILE.fc = 0; PROFILE.fsum = 0; PROFILE.gsum = 0; PROFILE.psum = 0; PROFILE.asum = 0; PROFILE.rsum = 0; PROFILE.t0 = performance.now();
+    PROFILE.active = true; PROFILE.samples = []; PROFILE.fc = 0; PROFILE.ftotal = 0; PROFILE.gsum = 0; PROFILE.psum = 0; PROFILE.asum = 0; PROFILE.rsum = 0; PROFILE.t0 = performance.now();
     console.log('=== PROFILE START ===');
 }
 function stopProfile() {
@@ -647,7 +647,7 @@ function animate() {
     if (PROFILE.active) {
         PROFILE.fc++;
         const s = getChunkStats();
-        PROFILE.fsum += 1 / (dt || 1/60);
+        PROFILE.ftotal += dt;
         PROFILE.gsum += s.chunkGenTime;
         PROFILE.asum += s.chunksAdded;
         PROFILE.rsum += s.chunksRemoved;
@@ -658,7 +658,7 @@ function animate() {
         if (PROFILE.fc % PROFILE.sampleEvery === 0) {
             const ts = getTerrainStats();
             const smp = {
-                fps: PROFILE.fsum / PROFILE.sampleEvery,
+                fps: PROFILE.ftotal > 0 ? PROFILE.sampleEvery / PROFILE.ftotal : 0,
                 gen: PROFILE.gsum,
                 phy: PROFILE.psum,
                 ads: PROFILE.asum,
@@ -670,7 +670,7 @@ function animate() {
             };
             PROFILE.samples.push(smp);
             console.log(`S${PROFILE.samples.length-1}: ${smp.fps.toFixed(0)}fps gen=${smp.gen.toFixed(2)}ms phys=${smp.phy.toFixed(2)}ms +${smp.ads}/-${smp.rem} vis=${smp.vch}/${smp.tch} tiles=${ts.tiles}(${smp.th}H/${smp.tm}M/${smp.tg}G/${smp.te}E) mem=${smp.mem}MB`);
-            PROFILE.fsum = 0; PROFILE.gsum = 0; PROFILE.psum = 0; PROFILE.asum = 0; PROFILE.rsum = 0;
+            PROFILE.ftotal = 0; PROFILE.gsum = 0; PROFILE.psum = 0; PROFILE.asum = 0; PROFILE.rsum = 0;
         }
 
         if (PROFILE.fc >= PROFILE.maxFrames) stopProfile();

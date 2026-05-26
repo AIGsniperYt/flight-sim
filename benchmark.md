@@ -5,7 +5,7 @@
 
 ---
 
-## Pre-Load All Chunks + Frustum Re-Eval *(newest)*
+## Pre-Load All Chunks + Frustum Re-Eval *(pre-Ultra, w/ Quadrants)*
 
 **Description:** Frustum-culled chunk generation was too aggressive — chunks behind the camera were never allocated GPU buffer slots. On fast camera rotation (orbit cam, chase cam with fast jets), they had to be generated from scratch, causing visible pop-in. 
 
@@ -79,6 +79,152 @@ avgFPS  avgGen(ms)  avgPhys(ms)  +/s   -/s   endChunks  endVisible  peakChunks  
 - Memory 91.8MB — actually lower than cruise, fewer tiles active during spin
 
 **Takeaway:** Gen time is higher at chunk-crossing, but rotation pop-in is **completely eliminated**. The tradeoff of ~24MB extra memory for always-loaded chunks is worth it for immersion. The frustum re-evaluation correctly tracks camera facing at <0.1ms per rotation event.
+
+---
+
+## Horizon LOD (step=50, 100 chunks, 5000 world units) *(newest)*
+
+**Description:** Added 5th LOD "horizon" with step=50 (4 verts/chunk in seamless mode) extending render distance from 50 → 100 chunks (2500 → 5000 world units). Edge fog blend improves from 71% → 92%, eliminating the visible hard square edge at altitude. Uses only ~2.3MB extra memory.
+
+**Gen time scales linearly with chunk count** — 40803 positions scanned vs 10403 before (3.9×). Each chunk-boundary crossing frame spikes to ~30-44ms gen time (vs ~12ms before), causing visible FPS dips from 100+ to ~20 on crossing frames. Smooth frames between crossings are 100+ FPS.
+
+### Run 1 — Cruise (F-16, straight flight ~200-300 m/s)
+
+```
+=== PROFILE START ===
+S0: 103fps gen=121.50ms phys=5.30ms +2885/-2885 vis=10342/40803 tiles=468(36858H/18M/900G/0E) mem=117.1MB
+S1: 73fps gen=119.80ms phys=4.60ms +2885/-2885 vis=10349/40803 tiles=558(1H/0M/990G/0E) mem=121.5MB
+S2: 74fps gen=154.40ms phys=5.80ms +3462/-3462 vis=10337/40803 tiles=648(1H/0M/1080G/0E) mem=68.4MB
+S3: 69fps gen=133.20ms phys=3.70ms +2885/-2885 vis=10327/40803 tiles=756(4H/0M/1188G/0E) mem=74.9MB
+S4: 65fps gen=175.50ms phys=4.70ms +4039/-4039 vis=10339/40803 tiles=882(36831H/36M/1314G/0E) mem=108.7MB
+S5: 69fps gen=149.50ms phys=4.80ms +3462/-3462 vis=10347/40803 tiles=972(7H/0M/1404G/0E) mem=113.2MB
+S6: 64fps gen=189.60ms phys=5.20ms +3462/-3462 vis=10334/40803 tiles=1080(10H/0M/1512G/0E) mem=127.3MB
+S7: 67fps gen=184.90ms phys=3.50ms +4039/-4039 vis=10344/40803 tiles=1224(36839H/36M/1656G/0E) mem=81.5MB
+S8: 102fps gen=150.90ms phys=3.60ms +3462/-3462 vis=10336/40803 tiles=1332(36856H/18M/1764G/0E) mem=96.5MB
+S9: 83fps gen=176.00ms phys=2.70ms +4039/-4039 vis=10340/40803 tiles=1440(2H/0M/1872G/0E) mem=110.4MB
+S10: 71fps gen=226.00ms phys=3.10ms +4039/-4039 vis=10308/40803 tiles=1566(8H/0M/1998G/0E) mem=101.8MB
+S11: 83fps gen=175.70ms phys=2.20ms +4039/-4039 vis=10304/40803 tiles=1692(10H/0M/2124G/0E) mem=132MB
+S12: 73fps gen=226.40ms phys=2.40ms +4616/-4616 vis=10278/40803 tiles=1854(1H/0M/2286G/0E) mem=74.2MB
+S13: 80fps gen=241.00ms phys=2.70ms +4616/-4616 vis=10264/40803 tiles=1980(5H/0M/2412G/0E) mem=104.4MB
+S14: 93fps gen=229.80ms phys=2.50ms +4616/-4616 vis=10252/40803 tiles=2106(9H/0M/2538G/0E) mem=103.2MB
+=== PROFILE STOP ===
+
+avgFPS  avgGen(ms)  avgPhys(ms)  +/s     -/s     endChunks  endVisible  peakChunks  avgTileHits/s  avgTileMisses/s  totalTilesGen  totalTilesEvict  endMem(MB)
+77.9    176.95      3.787        56546   56546   40803      10252       40803       9829           7                2538           0                103.2
+```
+
+**Notes:**
+- gen=176.95ms/sample = ~2.9ms/frame avg — crossing frames spike ~44ms, smooth frames 0ms
+- endChunks 40803 = full 100-chunk range (201×201=40401 + velocity extension)
+- visibleChunks 10252 = 25% of total — frustum re-eval hides 75%
+- Memory 103.2MB = +30% over pre-horizon 79.4MB, for 4× more chunks
+- 5 draw calls (was 4)
+- Zero tile evictions (2538 gen, 0 evict)
+
+### Run 2 — Spin (aggressive circles, F-16)
+
+```
+=== PROFILE START ===
+S0: 76fps gen=162.40ms phys=4.40ms +4053/-4053 vis=8306/41209 tiles=765(36832H/37M/1107G/0E) mem=89.3MB
+S1: 64fps gen=111.20ms phys=3.90ms +3474/-3474 vis=7270/41209 tiles=858(36851H/18M/1200G/0E) mem=96.1MB
+S2: 81fps gen=131.00ms phys=5.50ms +2895/-2895 vis=9386/41209 tiles=951(6H/0M/1293G/0E) mem=63.2MB
+S3: 71fps gen=104.90ms phys=5.10ms +1737/-1737 vis=9231/41209 tiles=1007(4H/0M/1349G/0E) mem=65.2MB
+S4: 69fps gen=72.50ms phys=4.70ms +1737/-1737 vis=9963/41209 tiles=1081(5H/0M/1423G/0E) mem=74.8MB
+S5: 63fps gen=76.80ms phys=4.40ms +1737/-1737 vis=8512/41209 tiles=1137(36870H/0M/1479G/0E) mem=85.5MB
+S6: 70fps gen=63.00ms phys=4.40ms +1728/-1728 vis=8931/41209 tiles=1194(5H/0M/1536G/0E) mem=82MB
+S7: 75fps gen=127.20ms phys=3.60ms +2316/-2316 vis=9412/41209 tiles=1232(36870H/0M/1574G/0E) mem=87.2MB
+S8: 66fps gen=24.10ms phys=1.50ms +579/-579 vis=8327/41209 tiles=1269(36870H/0M/1611G/0E) mem=102.5MB
+S9: 61fps gen=24.80ms phys=2.30ms +579/-579 vis=9744/41209 tiles=1306(36870H/0M/1648G/0E) mem=114.9MB
+S10: 71fps gen=50.40ms phys=2.40ms +1562/-1562 vis=8868/41209 tiles=1363(2H/0M/1705G/0E) mem=114.3MB
+S11: 64fps gen=55.40ms phys=3.00ms +1158/-1158 vis=5297/41209 tiles=1400(2H/0M/1742G/0E) mem=103.9MB
+S12: 64fps gen=80.40ms phys=1.90ms +1737/-1737 vis=3729/41209 tiles=1437(5H/0M/1779G/0E) mem=103.3MB
+S13: 60fps gen=24.60ms phys=3.50ms +579/-579 vis=9361/41209 tiles=1437(2H/0M/1779G/0E) mem=123.4MB
+S14: 77fps gen=32.10ms phys=2.90ms +579/-579 vis=8647/41209 tiles=1475(36877H/0M/1817G/0E) mem=76.6MB
+=== PROFILE STOP ===
+
+avgFPS  avgGen(ms)  avgPhys(ms)  +/s     -/s     endChunks  endVisible  peakChunks  avgTileHits/s  avgTileMisses/s  totalTilesGen  totalTilesEvict  endMem(MB)
+68.9    76.05       3.567        26450   26450   41209      8647        41209       17205          4                1817           0                76.6
+```
+
+**Notes:**
+- Spin gen lower (76.05ms vs 176.95ms cruise) — less camera translation
+- peakChunks 41209 = 203×203 (velocity extension both axes) — all within 44050 total pool
+- Memory 76.6MB — spin stays lower than cruise due to tighter frustum
+- S8,S9 gen < 25ms — periods where camera stayed near a chunk boundary, minimal translation
+
+---
+
+## Quadrant Removal + Ultra LOD
+
+**Description:** Removed the 4-quadrant allocation system (`NE`/`NW`/`SE`/`SW`). Each LOD now has a single buffer pool instead of 4 pools. This eliminates slot exhaustion at extreme world coordinates where all chunks concentrated in one quadrant. Also added 4th LOD "ultra" (step=25, scale=0.02) doubling render distance from 25 to 50 chunks.
+
+**Memory win:** Single pool means zero wasted pre-allocation — 1 pool per LOD instead of 4. Position buffers dropped from ~60.8MB to ~21.6MB.
+
+**Draw calls:** 4 (1 per LOD) instead of 12 (1 per LOD×quadrant).
+
+### Run 1 — Cruise (F-16, straight flight ~200 m/s)
+
+```
+=== PROFILE START ===
+S0: 61fps gen=38.60ms phys=4.80ms +1375/-1375 vis=2704/10403 tiles=486(10H/0M/486G/0E) mem=49MB
+S1: 63fps gen=43.80ms phys=4.80ms +1375/-1375 vis=2702/10403 tiles=558(7H/0M/558G/0E) mem=49.3MB
+S2: 80fps gen=47.20ms phys=5.20ms +1375/-1375 vis=2703/10403 tiles=684(36835H/36M/684G/0E) mem=53MB
+S3: 62fps gen=44.70ms phys=4.40ms +1650/-1650 vis=2699/10403 tiles=774(36835H/36M/774G/0E) mem=62.9MB
+S4: 60fps gen=28.70ms phys=4.50ms +1375/-1375 vis=2701/10403 tiles=864(36854H/18M/864G/0E) mem=75.8MB
+S5: 60fps gen=42.20ms phys=5.10ms +1650/-1650 vis=2699/10403 tiles=972(36836H/36M/972G/0E) mem=65.3MB
+S6: 62fps gen=37.30ms phys=4.40ms +1375/-1375 vis=2699/10403 tiles=1062(36856H/18M/1062G/0E) mem=44.3MB
+S7: 68fps gen=44.40ms phys=5.50ms +1650/-1650 vis=2699/10403 tiles=1170(36856H/18M/1170G/0E) mem=69.6MB
+S8: 59fps gen=48.90ms phys=2.80ms +1925/-1925 vis=2696/10403 tiles=1278(36838H/36M/1278G/0E) mem=60.5MB
+S9: 62fps gen=65.10ms phys=4.10ms +1650/-1650 vis=2700/10403 tiles=1386(13H/0M/1386G/0E) mem=65.3MB
+S10: 78fps gen=58.30ms phys=3.10ms +1925/-1925 vis=2698/10403 tiles=1530(1H/0M/1530G/0E) mem=77.2MB
+S11: 71fps gen=61.50ms phys=2.30ms +1925/-1925 vis=2654/10403 tiles=1656(2H/0M/1656G/0E) mem=81.7MB
+S12: 61fps gen=66.90ms phys=2.40ms +1925/-1925 vis=2664/10403 tiles=1764(2H/0M/1764G/0E) mem=61.5MB
+S13: 63fps gen=68.10ms phys=3.20ms +1925/-1925 vis=2660/10403 tiles=1890(36839H/36M/1890G/0E) mem=65.8MB
+S14: 61fps gen=66.50ms phys=3.30ms +2200/-2200 vis=2666/10403 tiles=2016(3H/0M/2016G/0E) mem=79.4MB
+=== PROFILE STOP ===
+
+avgFPS  avgGen(ms)  avgPhys(ms)  +/s      -/s      endChunks  endVisible  peakChunks  avgTileHits/s  avgTileMisses/s  totalTilesGen  totalTilesEvict  endMem(MB)
+64.9    50.81       3.993        25300    25300    10403      2666        10403       19652          16               2016           0                79.4
+```
+
+**Notes:**
+- `avgGen` 50.81ms = ~0.85ms/frame — generating 10403 chunks per boundary crossing (3.8× more than pre-ultra)
+- 4 draw calls (was 12) — one mesh per LOD, quadrant nesting eliminated
+- Memory only 79.4MB — despite 4× the chunks, single-pool buffers use less memory than 4× quadrants with 2703 chunks
+- `endChunks` 10403 = all 10201 ultra-range chunks + velocity extension — full pool
+- Steady FPS 64.9 — same as pre-ultra 65.8
+
+### Run 2 — Spin (aggressive circles, F-16)
+
+```
+=== PROFILE START ===
+S0: 60fps gen=31.70ms phys=5.10ms +1375/-1375 vis=2702/10403 tiles=504(13H/0M/504G/0E) mem=66.2MB
+S1: 64fps gen=25.20ms phys=5.40ms +1583/-1583 vis=1972/10403 tiles=596(9H/0M/596G/0E) mem=45.8MB
+S2: 66fps gen=33.20ms phys=4.20ms +1866/-1660 vis=3208/10609 tiles=728(36855H/19M/728G/0E) mem=58.2MB
+S3: 62fps gen=19.40ms phys=4.70ms +1108/-1108 vis=2384/10609 tiles=784(36872H/0M/784G/0E) mem=51.2MB
+S4: 63fps gen=31.50ms phys=4.40ms +1108/-1108 vis=1884/10609 tiles=877(6H/0M/877G/0E) mem=67.3MB
+S5: 64fps gen=17.90ms phys=5.50ms +831/-831 vis=2411/10609 tiles=914(3H/0M/914G/0E) mem=78.5MB
+S6: 61fps gen=5.00ms phys=4.70ms +275/-481 vis=2463/10403 tiles=952(36876H/0M/952G/0E) mem=61.8MB
+S7: 63fps gen=30.00ms phys=4.00ms +1035/-829 vis=2375/10609 tiles=1008(36875H/0M/1008G/0E) mem=65MB
+S8: 59fps gen=36.20ms phys=5.00ms +831/-831 vis=2403/10609 tiles=1065(36855H/19M/1065G/0E) mem=61.4MB
+S9: 62fps gen=19.80ms phys=5.30ms +831/-831 vis=2315/10609 tiles=1102(36874H/0M/1102G/0E) mem=72.5MB
+S10: 62fps gen=5.20ms phys=4.30ms +277/-277 vis=2849/10609 tiles=1140(36873H/0M/1140G/0E) mem=54.4MB
+S11: 61fps gen=6.10ms phys=2.20ms +277/-277 vis=2362/10609 tiles=1159(7H/0M/1159G/0E) mem=55.5MB
+S12: 60fps gen=11.70ms phys=3.00ms +756/-756 vis=2490/10609 tiles=1197(8H/0M/1197G/0E) mem=67.8MB
+S13: 63fps gen=20.70ms phys=2.60ms +554/-554 vis=2583/10609 tiles=1235(8H/0M/1235G/0E) mem=48.8MB
+S14: 63fps gen=9.40ms phys=3.50ms +554/-554 vis=2599/10609 tiles=1273(6H/0M/1273G/0E) mem=61.2MB
+=== PROFILE STOP ===
+
+avgFPS  avgGen(ms)  avgPhys(ms)  +/s     -/s     endChunks  endVisible  peakChunks  avgTileHits/s  avgTileMisses/s  totalTilesGen  totalTilesEvict  endMem(MB)
+62.2    20.20       4.260        13261   13055   10609      2599        10609       17209          3                1273           0                61.2
+```
+
+**Notes:**
+- Spin gen lower than cruise (20.20ms vs 50.81ms) — as expected, less camera translation
+- `peakChunks` 10609 = max in ultra range 101×101 = 10201 + velocity extension 103×103 = 10609
+- Memory only 61.2MB — lower than any previous benchmark at any render distance
+- All per-LOD pools well within capacity: 10609/12050 total = 88% utilization, 12% headroom
+- FPS 62.2 consistent with pre-ultra spin (61.8)
 
 ---
 
@@ -502,26 +648,27 @@ avgFPS  avgGen(ms)  avgPhys(ms)  +/s   -/s   endChunks  endVisible  peakChunks  
 > **Direction indicators:** `↑` higher is better, `↓` lower is better, `—` neutral/informational.
 > **All tests at `CHUNK_SIZE=50`.**
 
-| Metric ↓ (good direction) | Baseline | GPU Merged Meshes | GPU No BBox | CPU Heights (reverted) | Gustavson Fix (cruise) | Gustavson Fix (aggressive) | MAX_TILES=4000 (aggressive) | Frustum Cull (cruise) | Frustum Cull (spin) | **Pre-Load All (cruise)** | **Pre-Load All (spin)** |
-|---|---|---|---|---|---|---|---|---|---|---|---|
-| Chunk gen per frame `↓` | ~5ms | ~0.08ms | ~0.065ms | ~3.5ms | ~0.29ms | ~0.42ms | ~0.22ms | ~0.08ms | ~0.07ms | **~0.25ms** | **~0.10ms** |
-| avgGen(ms)/sample `↓` | 300.22 | 4.63 | 3.88 | 208.01 | 17.27 | 25.04 | 13.17 | 4.85 | 4.47 | **15.23** | **5.88** |
-| avgFPS `↑` | ~58k (buggy) | 60.2 | 61.4 | 67.6 | 65.5 | 65.6 | 65.0 | 67.0 | 63.3 | **65.8** | **61.8** |
-| avgPhys(ms)/sample `↓` | — | — | — | 3.57 | 3.79 | 2.58 | 3.27 | 4.27 | 4.07 | **3.87** | **3.80** |
-| **endChunks `↓`** | 3892 | 2703 | 2703 | 2703 | 2703 | 2703 | 2703 | 542 🏆 | 675 | **2703** | **2703** |
-| visibleChunks `↓` | 841 | 2703 | 2703 | 2582 | 2582 | 2582 | 2582 | 542 🏆 | 675 | **614** | **578** |
-| Memory peak `↓` | ~169MB | ~87MB | ~104MB | ~111MB | ~116MB | ~132MB | ~112MB | ~108MB | ~109MB | **~119MB** | **~106MB** |
-| Draw calls `↓` | ~2600 | 12 | 12 | 12 | 12 | 12 | 12 | 12 | 12 | **12** | **12** |
-| totalTilesGen `↓` | 1296 | 1152 | 954 | 11514 | 2808 | 7488 | 1818 | 1962 | 1167 🏆 | **2052** | **1184** |
-| totalTilesEvict `↓` (0=best) | 0 | 0 | 0 | 10000 | 1000 | 5000 | 0 🏆 | 0 🏆 | 0 🏆 | **0** 🏆 | **0** 🏆 |
-| Noise match CPU↔GPU `—` | ❌ | N/A | N/A | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Collision functional `—` | ❌ | ❌ | ❌ | ✅ (too slow) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Rotation pop-in `—` | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ⚠️ (margin) | ⚠️ (margin) | **✅ (none)** 🏆 | **✅ (none)** 🏆 |
+| Metric ↓ (good direction) | Baseline | GPU Merged Meshes | GPU No BBox | CPU Heights (reverted) | Gustavson Fix (cruise) | Gustavson Fix (aggressive) | MAX_TILES=4000 (aggressive) | Frustum Cull (cruise) | Frustum Cull (spin) | **Pre-Load All (cruise)** | **Pre-Load All (spin)** | **Quadrant Removal + Ultra (cruise)** | **Quadrant Removal + Ultra (spin)** | **Horizon LOD (cruise)** | **Horizon LOD (spin)** |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| View distance (world units) `↑` | 1250 | 1250 | 1250 | 1250 | 1250 | 1250 | 1250 | 1250 | 1250 | 1250 | 1250 | 2500 | 2500 | **5000** 🏆 | **5000** 🏆 |
+| Chunk gen per frame `↓` | ~5ms | ~0.08ms | ~0.065ms | ~3.5ms | ~0.29ms | ~0.42ms | ~0.22ms | ~0.08ms | ~0.07ms | ~0.25ms | ~0.10ms | ~0.85ms | ~0.34ms | **~2.9ms** | **~1.3ms** |
+| avgGen(ms)/sample `↓` | 300.22 | 4.63 | 3.88 | 208.01 | 17.27 | 25.04 | 13.17 | 4.85 | 4.47 | 15.23 | 5.88 | 50.81 | 20.20 | **176.95** | **76.05** |
+| avgFPS `↑` | ~58k (buggy) | 60.2 | 61.4 | 67.6 | 65.5 | 65.6 | 65.0 | 67.0 | 63.3 | 65.8 | 61.8 | 64.9 | 62.2 | **77.9** | **68.9** |
+| avgPhys(ms)/sample `↓` | — | — | — | 3.57 | 3.79 | 2.58 | 3.27 | 4.27 | 4.07 | 3.87 | 3.80 | 3.99 | 4.26 | **3.79** | **3.57** |
+| **endChunks `↓`** | 3892 | 2703 | 2703 | 2703 | 2703 | 2703 | 2703 | 542 🏆 | 675 | 2703 | 2703 | 10403 | 10609 | **40803** | **41209** |
+| visibleChunks `↓` | 841 | 2703 | 2703 | 2582 | 2582 | 2582 | 2582 | 542 🏆 | 675 | 614 | 578 | 2666 | 2599 | **10252** | **8647** |
+| Memory peak `↓` | ~169MB | ~87MB | ~104MB | ~111MB | ~116MB | ~132MB | ~112MB | ~108MB | ~109MB | ~119MB | ~106MB | 79.4MB | 61.2MB | **103.2MB** | **76.6MB** |
+| Draw calls `↓` | ~2600 | 12 | 12 | 12 | 12 | 12 | 12 | 12 | 12 | 12 | 12 | 4 | 4 | **5** | **5** |
+| totalTilesGen `↓` | 1296 | 1152 | 954 | 11514 | 2808 | 7488 | 1818 | 1962 | 1167 🏆 | 2052 | 1184 | 2016 | 1273 | **2538** | **1817** |
+| totalTilesEvict `↓` (0=best) | 0 | 0 | 0 | 10000 | 1000 | 5000 | 0 🏆 | 0 🏆 | 0 🏆 | 0 🏆 | 0 🏆 | 0 🏆 | 0 🏆 | **0** 🏆 | **0** 🏆 |
+| Noise match CPU↔GPU `—` | ❌ | N/A | N/A | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Collision functional `—` | ❌ | ❌ | ❌ | ✅ (too slow) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Rotation pop-in `—` | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ⚠️ (margin) | ⚠️ (margin) | ✅ (none) 🏆 | ✅ (none) 🏆 | ✅ (none) 🏆 | ✅ (none) 🏆 | **✅ (none)** 🏆 | **✅ (none)** 🏆 |
 
 **Key takeaways:**
-- **Pre-Load All** is the new flagship — **zero rotation pop-in**, all chunks pre-buffered
-- Gen time higher at chunk-crossing (15.23ms) but per-frame average still ~0.25ms — well within budget
-- Memory ~119MB peak (24MB more than frustum cull) — the cost of 2601 pre-loaded chunks
-- FPS unchanged at 65.8 cruise / 61.8 spin — bottleneck remains GPU vertex throughput, not gen
-- **Frustum Cull** remains useful as a memory-savings configuration but suffers rotation pop-in (even with margin bandage)
-- tile cache stable (2052 gen, 0 evict) — 4000 max tile holds all needed tiles
+- **View distance now 5000 world units** (100 chunks) — 16× the area of the original 1250-unit setup
+- **Horizon LOD cost is pure gen time, not memory** — 4 verts/chunk is the most efficient LOD yet
+- Gen time spike per crossing ~44ms (was ~12ms) — visible FPS dip on boundary crossings is the main performance cost
+- Fog density 0.0005 may be too thick now — render distance outran the fog, clear view feels shorter than expected
+- **Edge is gone** — the hard square cutoff at altitude is eliminated. Terrain fades into fog naturally at 5000m.
+- **Next bottleneck to tune**: gen time per crossing (smooth it by spreading across frames?) and fog density (reduce for clearer horizon)

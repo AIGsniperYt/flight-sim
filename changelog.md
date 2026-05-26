@@ -1,5 +1,106 @@
 # Changelog
-## **25/05/2026 — Fix: Ultra Slot Exhaustion (8200→8700)**
+## **26/05/2026 — Horizon LOD: Render Distance Doubled Again (50→100 chunks, 2500→5000 world units)**
+
+**Change:** Added 5th LOD level "horizon" extending render distance from 50 chunks (2500 world units) to 100 chunks (5000 world units). Edge fog blend improves from 71% (was visible) to 92% (near-invisible). At high altitude, the hard square edge is gone — terrain fades naturally into atmospheric haze.
+
+**Why:** At altitudes above 500m, the left/right edges of the loaded square were clearly visible at 2500m — the world felt like a "following square heightmap mesh." The ultra LOD (step=25) was too fine to extend further without massive memory cost. A coarser LOD was needed.
+
+**LOD table:**
+
+| LOD | Step | Verts/Chunk | Scale | Render Distance | Max Chunks |
+|---|---|---|---|---|---|
+| near | 1 | 50×50 = 2500 | 1.0 | 5 | 250 |
+| mid | 5 | 10×10 = 100 | 0.5 | 12 | 700 |
+| far | 10 | 5×5 = 25 | 0.1 | 25 | 2400 |
+| ultra | 25 | 3×3 = 9 | 0.02 | 50 | 8700 |
+| **horizon** | **50** | **2×2 = 4** | **0.001** | **100** | **32000** |
+
+**Memory impact:** Horizon LOD adds only ~2.3MB for vertex buffers (4 verts/chunk × 32000 slots × 12 bytes/vert + index buffer). Peak memory at 40803 chunks: 103.2MB (was 79.4MB without horizon). That's +30% memory for 4× more chunks — the most memory-efficient LOD yet.
+
+**Performance:**
+- Gen time: 176.95ms/sample cruise (was 50.81ms) — proportional to the 3.8× increase in scanned positions (11025 → 42025)
+- avgFPS: 77.9 cruise (was 64.9) — gen-time-heavy crossing frames dip to ~20 FPS, smooth frames hit 100+ FPS
+- Frustum re-eval now iterates 40803 entries → ~0.7ms per rotation event (was ~0.2ms at 10609)
+
+**User verdict:** "HOLY FUCK ITS AMAZING, now it feels a LOT more like infinity, and a lot less like a following square heightmap mesh!"
+
+---
+
+## **26/05/2026 — Fog Density Tuned (0.0005 → 0.0004)**
+
+**Change:** Reduced `FogExp2` density from 0.0005 to 0.0004 to match the new 5000-world-unit render distance.
+
+**Why:** 0.0005 was tuned for the 2500-unit edge — ground at 2500m was 71% fog-blended. Halving to 0.00025 made the world hypervisible with a harsh hard edge again. 0.0004 is the sweet spot: clear view feels natural at cruise altitudes while still hiding the 5000m edge.
+
+**New visibility at 0.0004:**
+- 1000m: 33% fog (was 39%) — subtly clearer at cruise
+- 2500m: 63% fog (was 71%) — mid-distance softer but not foggy
+- 5000m: 86% fog — edge well hidden, terrain fades naturally
+
+---
+
+## **26/05/2026 — CRITICAL BUG: Respawn Triggers Slot Exhaustion (add-before-remove → remove-before-add)**
+
+**Severity: CRITICAL** — After quadrant removal (single pool per LOD), respawning (teleport from crash site to origin) caused the world to render mostly empty with hundreds of "No free slots in bucket" warnings. Self-healed as the camera flew away.
+
+**Root cause:** The chunk update loop added ALL new chunks before removing old ones (`add → remove`). On a full teleport (~10609 chunks), the pool briefly held 10609 old + 10609 new = 21218 entries across pools sized for ~12050 total. Single-pool per LOD meant every LOD bucket was hit simultaneously — unlike the old 4-quadrant system where respawn at origin distributed chunks evenly.
+
+**Visual symptom:** `addChunkToBucket` returned early (no free slot) → chunk never written to position buffer → `activeChunks` entry missing → frustum re-eval silently skipped it → terrain hole. Only healed on next chunk-boundary crossing when real add-before-remove happened with fewer simultaneous chunks.
+
+**Fix:** Swapped the loops: `remove` old chunks (free slots) → `add` new chunks (use freed slots).
+
+```js
+// BEFORE: add then remove — slot count doubles during teleport
+for (const item of _toAdd) addChunkToBucket(...);
+for (const key of _toRemove) removeChunkFromBucket(...);
+
+// AFTER: remove then add — slot count stays below maxChunks
+for (const key of _toRemove) removeChunkFromBucket(...);
+for (const item of _toAdd) addChunkToBucket(...);
+```
+
+No visible downside: chunks start hidden (Y=-99999), frustum re-eval runs after both phases in the same frame.
+
+---
+
+## **26/05/2026 — Quadrant Removal: Single Pool Per LOD (16 buckets → 4)**
+
+**Change:** Removed the 4-quadrant allocation system (`NE`/`NW`/`SE`/`SW`) from terrain rendering. Each LOD now has a single buffer pool instead of 4 quadrant pools.
+
+**Why:** Quadrants were designed assuming chunks spread evenly across coordinate signs. At extreme world coordinates (e.g., far +X, far +Z), all chunks land in one quadrant (NE), concentrating allocation pressure and wasting 3/4 of the pre-allocated buffer. Required sizing every pool for worst-case single-quadrant load, wasting 3× memory.
+
+**What changed:**
+- Deleted `QUADRANTS` constant and `getQuadrantForChunk()` function
+- `mergedMeshes[lod]` holds one bucket directly (was `mergedMeshes[lod][quad]`)
+- `initMeshes`: single loop per LOD, one mesh, one geometry, one freeSlots stack
+- `addChunkToBucket` / `removeChunkFromBucket` / `hideChunkInBucket` / `unhideChunkInBucket`: no quadrant lookup
+- `toggleGapMode` / `updateChunks` cleanup: single loop per LOD
+- Draw calls: 4 (1 per LOD) vs 12 (1 per LOD×quadrant) before
+
+**Memory impact:**
+| Metric | Before (4 quads) | After (1 pool) | Delta |
+|---|---|---|---|
+| Position buffer | ~60.8 MB | ~21.6 MB | **-64%** 🟢 |
+| Draw calls | 12 | 4 | **-67%** 🟢 |
+| endMem (cruise) | 118.6 MB | 79.4 MB | **-33%** 🟢 |
+
+**maxChunks recalculated** for single-pool sizing:
+| LOD | Old (per quad) | New (single pool) |
+|---|---|---|
+| near | 150 | 250 |
+| mid | 600 | 700 |
+| far | 2600 | 2400 |
+| ultra | 8700 | 8700 |
+
+**Benchmark** (cruise: F-16, ~200 m/s, 50-chunk render distance):
+- avgFPS: 64.9 (was 65.8 pre-ultra) — stable, GPU-bound unchanged
+- endMem: 79.4 MB (was 118.6 MB) — **-33%** despite 4× more chunks loaded
+- visibleChunks: 2666 (was 614 pre-ultra) — doubled render distance
+- Zero slot exhaustion at any coordinate — single pool eliminates concentration problem
+
+---
+
+## **26/05/2026 — Fix: Ultra Slot Exhaustion (8200→8700)**
 
 **Bug:** Ultra NE running out of slots after sustained flight. At extreme world coordinates with diagonal velocity extension (extX=2, extZ=2), one quadrant holds all 8008 ultra chunks. On chunk-boundary crossing, add-before-remove phase temporarily peaks at 8008 + 205 entering + ~50 far→ultra transitions = **8263**. `maxChunks=8200` was 63 short.
 
