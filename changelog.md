@@ -1,4 +1,177 @@
 # Changelog
+## **25/05/2026 — Fix: Ultra Slot Exhaustion (8200→8700)**
+
+**Bug:** Ultra NE running out of slots after sustained flight. At extreme world coordinates with diagonal velocity extension (extX=2, extZ=2), one quadrant holds all 8008 ultra chunks. On chunk-boundary crossing, add-before-remove phase temporarily peaks at 8008 + 205 entering + ~50 far→ultra transitions = **8263**. `maxChunks=8200` was 63 short.
+
+**Visual symptom:** Failed `addChunkToBucket` produces blank holes (Y=-99999 vertices) that persist until a different LOD fills the position.
+
+**Fix:** `ultra.maxChunks` 8200→8700.
+
+---
+
+## **25/05/2026 — Ultra-Far LOD: Render Distance Doubled (25→50 chunks)**
+
+**Change:** Added 4th LOD level "ultra" to extend render distance from 25 chunks (1250 world units) to 50 chunks (2500 world units). No GPU vertex cost increase — ultra uses only 3×3 = 9 vertices per chunk (step=25, scale=0.02).
+
+**LOD table:**
+
+| LOD | Step | Verts/Chunk | Scale | Render Distance | Max Chunks/Quadrant |
+|---|---|---|---|---|---|
+| near | 1 | 50×50 = 2500 | 1.0 | 5 | 150 |
+| mid | 5 | 10×10 = 100 | 0.5 | 12 | 600 |
+| far | 10 | 5×5 = 25 | 0.1 | 25 | 2600 |
+| **ultra** | **25** | **3×3 = 9** | **0.02** | **50** | **8200** |
+
+**New `RENDER_DISTANCE_ULTRA = 50`** drives the chunk scanner bounds. LOD assignment falls through: near → mid → far → ultra. The scan now covers 101×101 = 10201 chunks (was 51×51 = 2601). Ultra ring: ~7600 chunks beyond far distance, each at 9 verts with near-zero height variation (floor(h * 0.02) → -1..1 range).
+
+**Memory impact:** ~3.5MB extra for ultra vertex buffers (8200 slots × 4 quads × 9 verts × 12 bytes). Total pre-loaded chunk memory ~123MB.
+
+**Perf impact:** Chunk-boundary scan iterates 4x more positions + generates ultra ring. Expected `avgGen` ~20ms (vs 15ms at 25 distance). Per-frame frustum re-eval iterates 10201 entries (~0.2ms vs ~0.05ms). FPS unchanged — GPU vertex count barely moves (+78K ultra verts vs 484K existing).
+
+**Wireframe:** U key now cycles through 4 materials (near/mid/far/ultra).
+
+**Depth precision note:** At RENDER_DISTANCE_ULTRA = 50 chunks (2500 world units), THREE.js default depth buffer (logarithmic for perspective) handles this distance at typical camera positions. Fog obscures the far LOD transition, hiding the flat ultra terrain at extreme distance. If z-fighting appears at ultra distance, switched to logarithmic depth buffer.
+
+---
+
+## **25/05/2026 — Benchmark: Pre-Load All Chunks**
+
+**Results** (see benchmark.md for full data):
+
+| Metric | Frustum Cull (cruise) | Pre-Load All (cruise) | Delta |
+|---|---|---|---|
+| avgFPS | 67.0 | 65.8 | ~stable |
+| avgGen(ms) | 4.85 | 15.23 | ↑ (more chunks gen'd) |
+| endChunks | 542 | 2703 | ↑ (all buffered) |
+| endMem(MB) | 95.3 | 118.6 | +24MB |
+| Rotation pop-in | ⚠️ (margin) | ✅ (none) | 🏆 |
+
+**Verdict:** ~24MB memory for zero rotation pop-in. Gen time higher but per-frame average still ~0.25ms. FPS unchanged — bottleneck is GPU vertex throughput, not gen. Ready for scale-up.
+
+---
+
+## **25/05/2026 — Bugfixes: visibleCount Overflow & Slot Exhaustion**
+
+**Bug 1 — visibleCount overflow (debug showed 10000/2703):**
+- `addChunkToBucket` incremented `bucket.visibleCount++` while also marking the chunk `hidden: true`
+- The re-evaluation then called `unhideChunkInBucket` which incremented `visibleCount++` again
+- Result: every chunk double-counted, `visibleCount` ballooned unbounded
+- **Fix:** Removed `visibleCount++` from `addChunkToBucket`. New chunks start Y=-99999 (hidden, zero visibleCount). The re-evaluation is the sole path that sets visibility.
+
+**Bug 2 — "No free slots" warning in far bucket (appeared after sustained flight):**
+- At extreme world coordinates with velocity extension (extX=2/[-25,+27]), all ~2809 in-range chunks land in a single quadrant
+- Far LOD chunks: ~2184 in the quadrant
+- On chunk-boundary crossing, `_toAdd` runs before `_toRemove`. During the adds phase, the far bucket temporarily holds:
+  - Existing 2184 far chunks + 53 entering (east edge) + ~25 mid→far transitions = ~2262
+  - Before removes free the corresponding west-edge + far→mid slots
+- `far.maxChunks=2200` < 2262 → slot exhaustion warning
+- **Fix:** Bumped `far.maxChunks` from 2200 → 2600. Worst-case peak at extreme+transition is ~2350, leaving 250 headroom.
+
+**Additional fix:** `addChunkToBucket` now sets Y=-99999 instead of Y=0. Prevents a 1-frame flash of visible terrain before the re-evaluation hides out-of-frustum chunks.
+
+---
+
+## **25/05/2026 — Pre-Load All Chunks + Per-Frame Frustum Re-Evaluation** — REAL FIX
+
+**The real fix for rotation pop-in.** Persistent slot allocation (previous entry) only helped if chunks were previously loaded. Fast rotation brings entirely new chunks into view that never had a slot — they still needed full generation.
+
+**Root cause:** The chunk scanner only loaded chunks that passed the frustum test. Chunks behind the camera were never allocated a slot. On rotation, they had to be generated from scratch (noise compute, Float32Array fill, bus upload).
+
+**Fix — Two-part approach:**
+
+1. **Load ALL in-range chunks, not just frustum-passing ones.** The chunk-boundary scan now adds every chunk within render distance to the vertex buffer (all 2601). New chunks start hidden (Y=-99999). Only chunks leaving the render distance square are evicted.
+
+   ```js
+   // BEFORE: frustum-gated — only visible chunks got slots
+   if (!frustum.intersectsBox(_frustumBBox)) continue;
+   _newActive.add(chunkKey);
+   if (!globalChunks.has(chunkKey)) { _toAdd.push(...); }
+
+   // AFTER: all chunks get slots, frustum determines visibility only
+   _newActive.add(chunkKey);  // every in-range chunk
+   if (!globalChunks.has(chunkKey)) { _toAdd.push(...); }
+   ```
+
+2. **Per-frame frustum re-evaluation on camera rotation.** Tracks `camera.getWorldDirection()` via dot product. When direction changes >15°, iterates all loaded chunks (2601) and hides/unhides based on current frustum. No generation — only `Float32Array` Y-value toggles.
+
+   ```js
+   _camDir.set(0, 0, 0);
+   camera.getWorldDirection(_camDir);
+   const dirChanged = _frustumDir === null || _camDir.dot(_frustumDir) < 0.965;
+
+   if (dirChanged) {
+       globalChunks.forEach((entry) => {
+           if (frustum.intersectsBox(bbox)) {
+               if (entry.hidden) { unhideChunkInBucket(...); }
+           } else {
+               if (!entry.hidden) { hideChunkInBucket(...); }
+           }
+       });
+   }
+   ```
+
+**Cost analysis:**
+- **Chunk-boundary scan (same as before)**: 2601 iterations × string key creation. Only runs on chunk-crossing.
+- **Frustum re-eval on rotation**: 2601 iterations × Box3 frustum test (6 plane checks). ~0.05-0.1ms. Only runs when camera rotates >15°.
+- **Hidden chunk memory**: 2601 chunks × average ~200 verts × 12 bytes = ~6MB extra vertex data. Acceptable.
+- **Zero generation on rotation**. The only buffer write is Y-value fill, which is `O(vertsPerChunk)` per toggled chunk.
+
+**Tradeoff:** Initial load at a new camera position generates all 2601 chunks (~500K vertices total across all LODs) instead of just the ~500 visible ones. This is a one-time cost per chunk-boundary crossing. Subsequent rotation within that area is instant.
+
+**FRUSTUM_MARGIN remains at CHUNK_SIZE (50)** — still useful to prevent frustum-plane edge clipping on individual chunks.
+
+**Stats added:** `getChunkStats().frustumEvalTime` — time spent in frustum re-evaluation (visible in debug overlay on rotation).
+
+---
+
+## **25/05/2026 — Persistent Slot Allocation: Frustum Culling Without Pop-In**
+
+**Severity: ARCHITECTURE** — The fundamental problem with frustum culling is that it frees GPU vertex buffer slots when chunks leave the view frustum. When the camera rotates, those chunks must be regenerated (noise compute, bus write, slot search), causing visible pop-in. The old `FRUSTUM_MARGIN` bandage just hid the problem for slow rotation — orbit cam and fast jets in chase cam easily outpace any margin.
+
+**Root cause:** `removeChunkFromBucket` freed slots and deleted chunk state on frustum exit. Re-entry required full regeneration.
+
+**Fix — Persistent slot allocation:**
+- Chunks that leave the frustum but stay within render distance are **hidden** (Y=-99999) but keep their slot, X/Z data, `activeChunks` entry, and `globalChunks` entry
+- Chunks that re-enter the frustum are **unhidden** (Y=0) — no slot search, no noise compute, no X/Z write. Just a fast Float32Array Y-fill
+- Chunks that leave the render distance entirely are **evicted** normally (slot freed, state deleted)
+
+**New functions:**
+```js
+// Only writes Y, keeps X/Z data and slot intact
+function hideChunkInBucket(chunkX, chunkZ, lod) {
+    pos[idx * 3 + 1] = -99999;  // Y only
+    bucket.dirty = true;
+    bucket.visibleCount--;
+}
+function unhideChunkInBucket(chunkX, chunkZ, lod) {
+    pos[idx * 3 + 1] = 0;  // Y only, GPU shader recomputes height
+    bucket.dirty = true;
+    bucket.visibleCount++;
+}
+```
+
+**Modified `updateChunks` removal phase:** the old `_toRemove` loop for all non-active chunks is split:
+```
+if out of frustum but in render distance → _toHide (keep slot)
+if out of render distance            → _toRemove (free slot)
+```
+
+**New unhide pass after adds:** chunks already in `globalChunks` that re-entered the frustum get unhidden (was previously impossible because state was deleted).
+
+**Consequences:**
+- `FRUSTUM_MARGIN` halved from `CHUNK_SIZE * 2` (100) → `CHUNK_SIZE` (50) — margin no longer masks a regeneration cost, just prevents frustum-plane edge clipping
+- `globalChunks` entries now track `hidden: boolean` — persistent across frustum transitions
+- Each bucket tracks `visibleCount` (activeChunks minus hidden) for correct visible chunk reporting
+- The cost of a frustum exit/re-entry cycle is now just a Y-buffer write (~O(n) for n-chunk verts, no allocation, no noise)
+
+**Tradeoff:** Memory footprint of in-range-but-hidden chunks persists until the camera moves far enough to evict them. At render distance 25, the max in-range square is 51×51 = 2601 chunks. At ~1-2KB per chunk entry + vertex buffer overhead, this adds ~3-5MB peak for hidden chunks. Acceptable.
+
+**One caveat remains:** the scan only runs when the camera crosses a chunk boundary. Pure rotation without chunk-crossing won't trigger unhide. This is the same behavior as before — the old code also only updated on chunk-crossing. If this becomes an issue, the scan trigger can be changed to a timer or frustum-change detection.
+
+**Stats added:** `getChunkStats()` now returns `chunksHidden` and `chunksUnhidden` counters. Shown in debug overlay as `hide:N/unhide:N` when nonzero.
+
+---
+
 ## **25/05/2026 — BUG FIX: Chunk Pop-In During Camera Rotation**
 
 **Severity: MAJOR** — frustum culling was too aggressive. Chunks behind the camera were fully unloaded. When the camera turned, they needed to be generated from scratch, causing visible pop-in that broke immersion.

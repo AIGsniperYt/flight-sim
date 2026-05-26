@@ -367,7 +367,7 @@ function updateDebug(dt) {
             Wireframe: ${getWireframe() ? 'ON' : 'OFF'} &nbsp; <b>U</b> toggles<br>
             Visible Chunks: ${stats.visibleChunks}/${stats.totalChunks}<br>
             <b>Processing</b><br>
-            Chunk Gen: ${stats.chunkGenTime.toFixed(1)} ms &nbsp; +${stats.chunksAdded}/-${stats.chunksRemoved}<br>
+            Chunk Gen: ${stats.chunkGenTime.toFixed(1)} ms &nbsp; +${stats.chunksAdded}/-${stats.chunksRemoved} &nbsp; ${stats.chunksHidden > 0 || stats.chunksUnhidden > 0 ? `h:${stats.chunksHidden}/u:${stats.chunksUnhidden}` : ''}${stats.frustumEvalTime > 0 ? ` &nbsp; fEval:${stats.frustumEvalTime.toFixed(2)}ms` : ''}<br>
             Physics: ${getPhysicsStats().physicsTime.toFixed(2)} ms<br>
             Terrain Cache: ${(function(){ const t=getTerrainStats(); return `${t.tiles} tiles &nbsp; ${t.tileHits}H/${t.tileMisses}M &nbsp; gen:${t.tilesGenerated} evict:${t.tileEvictions}`; })()}<br>
             Chunks: ${getShowGaps() ? 'GAPPED (dev)' : 'SEAMLESS'} <b>J</b> toggles<br>

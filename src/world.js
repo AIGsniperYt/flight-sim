@@ -51,6 +51,7 @@ const CHUNK_SIZE = 50;
 const RENDER_DISTANCE_NEAR = 5;
 const RENDER_DISTANCE_MID = 12;
 const RENDER_DISTANCE_FAR = 25;
+const RENDER_DISTANCE_ULTRA = 50;
 
 let visibleChunks = 0;
 let showGaps = true;
@@ -58,7 +59,8 @@ let showGaps = true;
 const LOD_CONFIGS = {
     near: { step: 1, scale: 1.0, maxChunks: 150 },
     mid: { step: 5, scale: 0.5, maxChunks: 600 },
-    far: { step: 10, scale: 0.1, maxChunks: 2200 }
+    far: { step: 10, scale: 0.1, maxChunks: 2600 },
+    ultra: { step: 25, scale: 0.02, maxChunks: 8700 }
 };
 
 const QUADRANTS = ['NE', 'NW', 'SE', 'SW'];
@@ -66,11 +68,12 @@ const QUADRANTS = ['NE', 'NW', 'SE', 'SW'];
 const LOD_HEIGHT_RANGES = {
     near: { min: -10, max: 90 },
     mid: { min: -5, max: 45 },
-    far: { min: -2, max: 10 }
+    far: { min: -2, max: 10 },
+    ultra: { min: -1, max: 1 }
 };
-const FRUSTUM_MARGIN = CHUNK_SIZE * 2;
+const FRUSTUM_MARGIN = CHUNK_SIZE;
 
-const mergedMeshes = { near: {}, mid: {}, far: {} };
+const mergedMeshes = { near: {}, mid: {}, far: {}, ultra: {} };
 const globalChunks = new Map();
 const precomputedIndices = {};
 let initialized = false;
@@ -78,9 +81,12 @@ let _lastCamCX = null, _lastCamCZ = null;
 const _newActive = new Set();
 const _toAdd = [];
 const _toRemove = [];
-let _chunkGenTime = 0, _chunksAdded = 0, _chunksRemoved = 0;
+let _chunkGenTime = 0, _chunksAdded = 0, _chunksRemoved = 0, _chunksHidden = 0, _chunksUnhidden = 0;
 const _terrainMaterials = [];
 const _frustumBBox = new THREE.Box3();
+let _frustumDir = null;
+const _camDir = new THREE.Vector3();
+let _frustumEvalTime = 0;
 
 export function toggleWireframe() {
     const on = !_terrainMaterials[0]?.wireframe;
@@ -101,11 +107,17 @@ export function getChunkStats() {
         totalChunks: globalChunks.size,
         chunkGenTime: _chunkGenTime,
         chunksAdded: _chunksAdded,
-        chunksRemoved: _chunksRemoved
+        chunksRemoved: _chunksRemoved,
+        chunksHidden: _chunksHidden,
+        chunksUnhidden: _chunksUnhidden,
+        frustumEvalTime: _frustumEvalTime
     };
     _chunkGenTime = 0;
     _chunksAdded = 0;
     _chunksRemoved = 0;
+    _chunksHidden = 0;
+    _chunksUnhidden = 0;
+    _frustumEvalTime = 0;
     return stats;
 }
 
@@ -117,7 +129,7 @@ export function toggleGapMode(scene) {
     showGaps = !showGaps;
     
     if (initialized) {
-        for (const lod of ["near", "mid", "far"]) {
+        for (const lod of ["near", "mid", "far", "ultra"]) {
             for (const quad of QUADRANTS) {
                 const bucket = mergedMeshes[lod][quad];
                 scene.remove(bucket.mesh);
@@ -170,7 +182,7 @@ function getQuadrantForChunk(chunkX, chunkZ) {
 }
 
 function initMeshes(scene) {
-    for (const lod of ['near', 'mid', 'far']) {
+    for (const lod of ['near', 'mid', 'far', 'ultra']) {
         const config = LOD_CONFIGS[lod];
         
         const vertsPerSide = showGaps ? CHUNK_SIZE / config.step : CHUNK_SIZE / config.step + 1;
@@ -289,7 +301,8 @@ function initMeshes(scene) {
                 vertsPerChunk,
                 bounds: new THREE.Box3(),
                 changed: false,
-                dirty: false
+                dirty: false,
+                visibleCount: 0
             };
         }
     }
@@ -325,7 +338,7 @@ function addChunkToBucket(scene, chunkX, chunkZ, lod) {
 
             const i3 = idx * 3;
             pos[i3] = worldX;
-            pos[i3 + 1] = 0;
+            pos[i3 + 1] = -99999;
             pos[i3 + 2] = worldZ;
 
             idx++;
@@ -345,7 +358,7 @@ function addChunkToBucket(scene, chunkX, chunkZ, lod) {
     bucket.activeChunks.set(chunkKey, { slot, bbox });
 }
 
-function removeChunkFromBucket(chunkX, chunkZ, lod) {
+function removeChunkFromBucket(chunkX, chunkZ, lod, skipVisDec = false) {
     const quad = getQuadrantForChunk(chunkX, chunkZ);
     const bucket = mergedMeshes[lod][quad];
     const chunkKey = `${chunkX},${chunkZ}`;
@@ -368,6 +381,47 @@ function removeChunkFromBucket(chunkX, chunkZ, lod) {
     bucket.changed = true;
     bucket.freeSlots.push(slot);
     bucket.activeChunks.delete(chunkKey);
+    if (!skipVisDec) bucket.visibleCount--;
+}
+
+function hideChunkInBucket(chunkX, chunkZ, lod) {
+    const quad = getQuadrantForChunk(chunkX, chunkZ);
+    const bucket = mergedMeshes[lod][quad];
+    const chunkKey = `${chunkX},${chunkZ}`;
+    const chunkData = bucket.activeChunks.get(chunkKey);
+    if (!chunkData) return;
+
+    const pos = bucket.geometry.attributes.position.array;
+    const slot = chunkData.slot;
+    let idx = slot * bucket.vertsPerChunk;
+
+    for (let i = 0; i < bucket.vertsPerChunk; i++) {
+        pos[idx * 3 + 1] = -99999;
+        idx++;
+    }
+
+    bucket.dirty = true;
+    bucket.visibleCount--;
+}
+
+function unhideChunkInBucket(chunkX, chunkZ, lod) {
+    const quad = getQuadrantForChunk(chunkX, chunkZ);
+    const bucket = mergedMeshes[lod][quad];
+    const chunkKey = `${chunkX},${chunkZ}`;
+    const chunkData = bucket.activeChunks.get(chunkKey);
+    if (!chunkData) return;
+
+    const pos = bucket.geometry.attributes.position.array;
+    const slot = chunkData.slot;
+    let idx = slot * bucket.vertsPerChunk;
+
+    for (let i = 0; i < bucket.vertsPerChunk; i++) {
+        pos[idx * 3 + 1] = 0;
+        idx++;
+    }
+
+    bucket.dirty = true;
+    bucket.visibleCount++;
 }
 
 export function updateChunks(scene, camera, frustum, vx = 0, vz = 0) {
@@ -376,6 +430,16 @@ export function updateChunks(scene, camera, frustum, vx = 0, vz = 0) {
     const cameraChunkX = Math.floor(camera.position.x / CHUNK_SIZE);
     const cameraChunkZ = Math.floor(camera.position.z / CHUNK_SIZE);
 
+    const vThreshold = 10;
+    const extX = Math.abs(vx) > vThreshold ? Math.sign(vx) * 2 : 0;
+    const extZ = Math.abs(vz) > vThreshold ? Math.sign(vz) * 2 : 0;
+
+    const minX = cameraChunkX - RENDER_DISTANCE_ULTRA + Math.min(0, extX);
+    const maxX = cameraChunkX + RENDER_DISTANCE_ULTRA + Math.max(0, extX);
+    const minZ = cameraChunkZ - RENDER_DISTANCE_ULTRA + Math.min(0, extZ);
+    const maxZ = cameraChunkZ + RENDER_DISTANCE_ULTRA + Math.max(0, extZ);
+
+    // Full scan on chunk boundary change: load ALL in-range chunks into buckets
     if (cameraChunkX !== _lastCamCX || cameraChunkZ !== _lastCamCZ) {
         _lastCamCX = cameraChunkX;
         _lastCamCZ = cameraChunkZ;
@@ -385,26 +449,14 @@ export function updateChunks(scene, camera, frustum, vx = 0, vz = 0) {
         _newActive.clear();
         _toAdd.length = 0;
 
-        const vThreshold = 10;
-        const extX = Math.abs(vx) > vThreshold ? Math.sign(vx) * 2 : 0;
-        const extZ = Math.abs(vz) > vThreshold ? Math.sign(vz) * 2 : 0;
-
-        const minX = cameraChunkX - RENDER_DISTANCE_FAR + Math.min(0, extX);
-        const maxX = cameraChunkX + RENDER_DISTANCE_FAR + Math.max(0, extX);
-        const minZ = cameraChunkZ - RENDER_DISTANCE_FAR + Math.min(0, extZ);
-        const maxZ = cameraChunkZ + RENDER_DISTANCE_FAR + Math.max(0, extZ);
-
         for (let x = minX; x <= maxX; x++) {
             for (let z = minZ; z <= maxZ; z++) {
                 const dx = Math.abs(x - cameraChunkX);
                 const dz = Math.abs(z - cameraChunkZ);
-                let lod = "far";
+                let lod = "ultra";
                 if (dx <= RENDER_DISTANCE_NEAR && dz <= RENDER_DISTANCE_NEAR) lod = "near";
                 else if (dx <= RENDER_DISTANCE_MID && dz <= RENDER_DISTANCE_MID) lod = "mid";
-
-                _frustumBBox.min.set(x * CHUNK_SIZE - FRUSTUM_MARGIN, -200, z * CHUNK_SIZE - FRUSTUM_MARGIN);
-                _frustumBBox.max.set((x + 1) * CHUNK_SIZE + FRUSTUM_MARGIN, 200, (z + 1) * CHUNK_SIZE + FRUSTUM_MARGIN);
-                if (!frustum.intersectsBox(_frustumBBox)) continue;
+                else if (dx <= RENDER_DISTANCE_FAR && dz <= RENDER_DISTANCE_FAR) lod = "far";
 
                 const chunkKey = `${x},${z},${lod}`;
                 _newActive.add(chunkKey);
@@ -422,25 +474,67 @@ export function updateChunks(scene, camera, frustum, vx = 0, vz = 0) {
             }
         });
 
-        for (const key of _toRemove) {
-            const entry = globalChunks.get(key);
-            removeChunkFromBucket(entry.chunkX, entry.chunkZ, entry.lod);
-            globalChunks.delete(key);
-        }
-
         for (const item of _toAdd) {
             addChunkToBucket(scene, item.x, item.z, item.lod);
-            globalChunks.set(item.chunkKey, { chunkX: item.x, chunkZ: item.z, lod: item.lod });
+            globalChunks.set(item.chunkKey, { chunkX: item.x, chunkZ: item.z, lod: item.lod, hidden: true });
+            _chunksHidden++;
+        }
+
+        for (const key of _toRemove) {
+            const entry = globalChunks.get(key);
+            removeChunkFromBucket(entry.chunkX, entry.chunkZ, entry.lod, entry.hidden);
+            globalChunks.delete(key);
         }
 
         _chunkGenTime = performance.now() - _start;
         _chunksAdded = _toAdd.length;
         _chunksRemoved = _toRemove.length;
+
+        _frustumDir = null;
+    }
+
+    // Frustum re-evaluation: shows/hides chunks based on camera facing
+    // Runs when camera rotates significantly (direction dot < 0.965 ≈ 15°)
+    _camDir.set(0, 0, 0);
+    camera.getWorldDirection(_camDir);
+    const dirChanged = _frustumDir === null || _camDir.dot(_frustumDir) < 0.965;
+
+    if (dirChanged) {
+        if (!_frustumDir) _frustumDir = new THREE.Vector3();
+        _frustumDir.copy(_camDir);
+
+        _chunksHidden = 0;
+        _chunksUnhidden = 0;
+
+        const reEvalStart = performance.now();
+
+        globalChunks.forEach((entry) => {
+            const x = entry.chunkX, z = entry.chunkZ;
+
+            _frustumBBox.min.set(x * CHUNK_SIZE - FRUSTUM_MARGIN, -200, z * CHUNK_SIZE - FRUSTUM_MARGIN);
+            _frustumBBox.max.set((x + 1) * CHUNK_SIZE + FRUSTUM_MARGIN, 200, (z + 1) * CHUNK_SIZE + FRUSTUM_MARGIN);
+
+            if (frustum.intersectsBox(_frustumBBox)) {
+                if (entry.hidden) {
+                    unhideChunkInBucket(x, z, entry.lod);
+                    entry.hidden = false;
+                    _chunksUnhidden++;
+                }
+            } else {
+                if (!entry.hidden) {
+                    hideChunkInBucket(x, z, entry.lod);
+                    entry.hidden = true;
+                    _chunksHidden++;
+                }
+            }
+        });
+
+        _frustumEvalTime = performance.now() - reEvalStart;
     }
 
     visibleChunks = 0;
 
-    for (const lod of ["near", "mid", "far"]) {
+    for (const lod of ["near", "mid", "far", "ultra"]) {
         for (const quad of QUADRANTS) {
             const bucket = mergedMeshes[lod][quad];
             if (bucket.dirty) {
@@ -454,10 +548,10 @@ export function updateChunks(scene, camera, frustum, vx = 0, vz = 0) {
                 }
                 bucket.changed = false;
             }
-            
-            bucket.mesh.visible = bucket.activeChunks.size > 0 && frustum.intersectsBox(bucket.bounds);
+
+            bucket.mesh.visible = bucket.visibleCount > 0 && frustum.intersectsBox(bucket.bounds);
             if (bucket.mesh.visible) {
-                visibleChunks += bucket.activeChunks.size;
+                visibleChunks += bucket.visibleCount;
             }
         }
     }
