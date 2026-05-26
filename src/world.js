@@ -39,11 +39,22 @@ float snoise(vec2 P) {
   return 2.3 * n_xy;
 }
 
-float computeHeight(float wx, float wz, float baseScale, float hillScale, float mountainScale, float heightScale, float flatnessFactor, float hillHeightMultiplier, float mountainHeightMultiplier) {
-    float base = snoise(vec2(wx * baseScale, wz * baseScale)) * heightScale * flatnessFactor;
-    float hill = snoise(vec2(wx * hillScale, wz * hillScale)) * heightScale * hillHeightMultiplier;
-    float mountain = max(0.0, snoise(vec2(wx * mountainScale, wz * mountainScale))) * heightScale * mountainHeightMultiplier;
-    return base + hill + mountain;
+float ridgedNoise(vec2 p) {
+    float n = 1.0 - abs(snoise(p));
+    return n * n;
+}
+
+float computeHeight(float wx, float wz, float baseScale, float hillScale, float mountainScale, float heightScale, float flatnessFactor, float hillHeightMultiplier, float mountainHeightMultiplier, float continentScale, float warpScale) {
+    vec2 pos = vec2(wx, wz);
+    float continent = snoise(pos * continentScale) * heightScale * 2.0;
+    float warpX = snoise(pos * warpScale) * 100.0;
+    float warpZ = snoise(pos * warpScale + 100.0) * 100.0;
+    vec2 warpPos = pos + vec2(warpX, warpZ);
+    float base = snoise(warpPos * baseScale) * heightScale * flatnessFactor;
+    float hill = snoise(warpPos * hillScale) * heightScale * hillHeightMultiplier;
+    float mountain = ridgedNoise(warpPos * mountainScale) * heightScale * mountainHeightMultiplier;
+    float detail = snoise(warpPos * 0.3) * 1.0;
+    return continent + base + hill + mountain + detail;
 }
 `;
 
@@ -197,8 +208,8 @@ function initMeshes(scene) {
             shader.uniforms.flatnessFactor = { value: 0.2 };
             shader.uniforms.hillHeightMultiplier = { value: 0.1 };
             shader.uniforms.mountainHeightMultiplier = { value: 4.0 };
-            shader.uniforms.snowLevel = { value: 0.99 * 20.0 * 2.0 };
-            shader.uniforms.lodScale = { value: config.scale };
+            shader.uniforms.continentScale = { value: 0.0005 };
+            shader.uniforms.warpScale = { value: 0.002 };
 
             shader.vertexShader = `
                 ${simplexNoiseGLSL}
@@ -209,6 +220,8 @@ function initMeshes(scene) {
                 uniform float flatnessFactor;
                 uniform float hillHeightMultiplier;
                 uniform float mountainHeightMultiplier;
+                uniform float continentScale;
+                uniform float warpScale;
                 varying float vHeight;
                 ${shader.vertexShader}
             `;
@@ -217,7 +230,7 @@ function initMeshes(scene) {
                 '#include <begin_vertex>',
                 `
                 vec3 transformed = vec3( position );
-                float h = computeHeight(transformed.x, transformed.z, baseScale, hillScale, mountainScale, heightScale, flatnessFactor, hillHeightMultiplier, mountainHeightMultiplier);
+                float h = computeHeight(transformed.x, transformed.z, baseScale, hillScale, mountainScale, heightScale, flatnessFactor, hillHeightMultiplier, mountainHeightMultiplier, continentScale, warpScale);
                 transformed.y = h;
                 vHeight = h;
                 `
@@ -225,7 +238,6 @@ function initMeshes(scene) {
 
             shader.fragmentShader = `
                 uniform float heightScale;
-                uniform float snowLevel;
                 varying float vHeight;
                 ${shader.fragmentShader}
             `;

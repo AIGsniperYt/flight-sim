@@ -9,6 +9,21 @@
 
 ---
 
+## **26/05/2026 — Phase 2: Terrain Noise Replaced (Continent + Ridged + Domain Warp + Detail)**
+
+**Change:** Replaced the three-octave noise stack with a five-octave system that produces actual geography:
+
+- **Continent** (scale=0.0005, ±40m): Broad basin-and-range elevation. Creates distinct regions — high plateaus, low valleys — instead of uniform bumpiness.
+- **Domain warp** (scale=0.002, shift=100m): Feeds noise-shifted coordinates into all subsequent octaves. Ridges and valleys flow organically instead of stretching like perlin blobs.
+- **Base** (scale=0.02, ±4m): Fine undulation, same as before but warped.
+- **Hill** (scale=0.04, ±2m): Small hills, same as before but warped.
+- **Mountain** (scale=0.003, 0–80m): Replaced `max(0, noise)` with `ridgedNoise(p) = (1.0 - abs(noise))²`. Sharp V-shaped valleys and knife-edge ridges instead of smooth round bumps.
+- **Detail** (scale=0.3, ±1m): High-frequency texture breaking up the plastic look.
+
+GPU and CPU noise paths updated identically (`terrain.js` + `world.js`). `getHeightScaled` no longer floors (full-precision collision height). Removed unused `lodScale` and `snowLevel` uniforms. ComputeHeight signature changed — added `continentScale` and `warpScale` parameters.
+
+---
+
 ## **26/05/2026 — Terrain Vertex Colouring: Green→Brown→Grey→Snow**
 
 **Change:** Replaced the old hard-band grey gradient with smooth four-stage terrain colouring via `smoothstep` in the fragment shader. Low grass green (0–4m) blends to brown earth (4–18m), then grey rock (18–35m), then snow white (35m+). No textures, no CPU cost — pure shader math on the existing `vHeight` varying.

@@ -8,7 +8,8 @@ const hillScale = 0.04;
 const flatnessFactor = 0.2;
 const mountainHeightMultiplier = 4.0;
 const hillHeightMultiplier = 0.1;
-
+const continentScale = 0.0005;
+const warpScale = 0.002;
 const snowLevel = 0.99 * heightScale * 2;
 
 function snoise2D(x, y) {
@@ -73,6 +74,11 @@ let _cachedTileKey = null;
 let _cachedTile = null;
 let _tileHits = 0, _tileMisses = 0, _tilesGenerated = 0, _tileEvictions = 0;
 
+function ridgedNoise(x, y) {
+    const n = 1.0 - Math.abs(snoise2D(x, y));
+    return n * n;
+}
+
 function generateTile(tileX, tileZ) {
     const data = new Float32Array(TILE_SIZE * TILE_SIZE);
     const originX = tileX * TILE_SIZE;
@@ -82,10 +88,16 @@ function generateTile(tileX, tileZ) {
         for (let x = 0; x < TILE_SIZE; x++) {
             const wx = x + originX;
             const wz = z + originZ;
-            const base = snoise2D(wx * baseScale, wz * baseScale) * heightScale * flatnessFactor;
-            const hill = snoise2D(wx * hillScale, wz * hillScale) * heightScale * hillHeightMultiplier;
-            const mountain = Math.max(0, snoise2D(wx * mountainScale, wz * mountainScale)) * heightScale * mountainHeightMultiplier;
-            data[i++] = base + hill + mountain;
+            const continent = snoise2D(wx * continentScale, wz * continentScale) * heightScale * 2.0;
+            const warpX = snoise2D(wx * warpScale, wz * warpScale) * 100.0;
+            const warpZ = snoise2D(wx * warpScale + 100.0, wz * warpScale + 100.0) * 100.0;
+            const wwx = wx + warpX;
+            const wwz = wz + warpZ;
+            const base = snoise2D(wwx * baseScale, wwz * baseScale) * heightScale * flatnessFactor;
+            const hill = snoise2D(wwx * hillScale, wwz * hillScale) * heightScale * hillHeightMultiplier;
+            const mountain = ridgedNoise(wwx * mountainScale, wwz * mountainScale) * heightScale * mountainHeightMultiplier;
+            const detail = snoise2D(wwx * 0.3, wwz * 0.3) * 1.0;
+            data[i++] = continent + base + hill + mountain + detail;
         }
     }
     return data;
@@ -129,7 +141,7 @@ export function getHeight(worldX, worldZ) {
 }
 
 export function getHeightScaled(worldX, worldZ, lodScale = 1.0) {
-    return Math.floor(getHeight(worldX, worldZ) * lodScale);
+    return getHeight(worldX, worldZ);
 }
 
 export function getTerrainColorAt(worldX, worldZ) {
