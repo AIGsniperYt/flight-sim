@@ -1,4 +1,16 @@
 # Changelog
+## **26/05/2026 — Phase 3: Continent-Masked Mountains + Elevation-Scaled Detail**
+
+**Change:** Two structural improvements from studying `test.html` (single-mountain example):
+
+- **Continent as mountain mask:** Ridged noise amplitude is now scaled by `smoothstep(-15, 25, continent)`. Low-continent regions (−40 to −15) are flat plains with no mountains. The transition band (−15 to 25) produces rolling hills. High-continent regions (25 to 40) host full mountain ranges with sharp ridged noise. Mountains now cluster into distinct ranges instead of appearing uniformly everywhere.
+
+- **Elevation-scaled detail:** The detail octave (±1m at scale 0.3) is now scaled by `clamp(height / 60, 0, 1)`. Valley floors get zero detail (smooth), peaks get full detail (jagged). This matches the real-world pattern where erosion textures are more pronounced at higher elevations.
+
+GPU and CPU paths updated identically. Added `smoothstep` helper to terrain.js.
+
+---
+
 ## **26/05/2026 — LOD Height Quantization Removed (Full-Precision Heights at All LODs)**
 
 **Change:** Removed `floor(h * lodScale)` from the vertex shader. All 5 LODs now compute terrain height at full floating-point precision. The `lodScale` uniform and its 0.001× multiplier for horizon LOD (which snapped heights to 1000m steps) are gone. Geometric LOD (chunk step size) remains — horizon still uses 50m between vertices — but every vertex sits at its correct mountain height.

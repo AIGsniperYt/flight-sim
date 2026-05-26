@@ -79,6 +79,11 @@ function ridgedNoise(x, y) {
     return n * n;
 }
 
+function smoothstep(edge0, edge1, x) {
+    const t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)));
+    return t * t * (3 - 2 * t);
+}
+
 function generateTile(tileX, tileZ) {
     const data = new Float32Array(TILE_SIZE * TILE_SIZE);
     const originX = tileX * TILE_SIZE;
@@ -89,15 +94,18 @@ function generateTile(tileX, tileZ) {
             const wx = x + originX;
             const wz = z + originZ;
             const continent = snoise2D(wx * continentScale, wz * continentScale) * heightScale * 2.0;
+            const mountainMask = smoothstep(-15.0, 25.0, continent);
             const warpX = snoise2D(wx * warpScale, wz * warpScale) * 100.0;
             const warpZ = snoise2D(wx * warpScale + 100.0, wz * warpScale + 100.0) * 100.0;
             const wwx = wx + warpX;
             const wwz = wz + warpZ;
             const base = snoise2D(wwx * baseScale, wwz * baseScale) * heightScale * flatnessFactor;
             const hill = snoise2D(wwx * hillScale, wwz * hillScale) * heightScale * hillHeightMultiplier;
-            const mountain = ridgedNoise(wwx * mountainScale, wwz * mountainScale) * heightScale * mountainHeightMultiplier;
-            const detail = snoise2D(wwx * 0.3, wwz * 0.3) * 1.0;
-            data[i++] = continent + base + hill + mountain + detail;
+            const mountain = ridgedNoise(wwx * mountainScale, wwz * mountainScale) * heightScale * mountainHeightMultiplier * mountainMask;
+            const preDetail = continent + base + hill + mountain;
+            const elevationFactor = Math.max(0, Math.min(1, preDetail / (heightScale * 3.0)));
+            const detail = snoise2D(wwx * 0.3, wwz * 0.3) * 1.0 * elevationFactor;
+            data[i++] = preDetail + detail;
         }
     }
     return data;

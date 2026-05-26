@@ -47,14 +47,17 @@ float ridgedNoise(vec2 p) {
 float computeHeight(float wx, float wz, float baseScale, float hillScale, float mountainScale, float heightScale, float flatnessFactor, float hillHeightMultiplier, float mountainHeightMultiplier, float continentScale, float warpScale) {
     vec2 pos = vec2(wx, wz);
     float continent = snoise(pos * continentScale) * heightScale * 2.0;
+    float mountainMask = smoothstep(-15.0, 25.0, continent);
     float warpX = snoise(pos * warpScale) * 100.0;
     float warpZ = snoise(pos * warpScale + 100.0) * 100.0;
     vec2 warpPos = pos + vec2(warpX, warpZ);
     float base = snoise(warpPos * baseScale) * heightScale * flatnessFactor;
     float hill = snoise(warpPos * hillScale) * heightScale * hillHeightMultiplier;
-    float mountain = ridgedNoise(warpPos * mountainScale) * heightScale * mountainHeightMultiplier;
-    float detail = snoise(warpPos * 0.3) * 1.0;
-    return continent + base + hill + mountain + detail;
+    float mountain = ridgedNoise(warpPos * mountainScale) * heightScale * mountainHeightMultiplier * mountainMask;
+    float preDetail = continent + base + hill + mountain;
+    float elevationFactor = clamp(preDetail / (heightScale * 3.0), 0.0, 1.0);
+    float detail = snoise(warpPos * 0.3) * 1.0 * elevationFactor;
+    return preDetail + detail;
 }
 `;
 
