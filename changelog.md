@@ -13,7 +13,11 @@
 
 **Change (v2 — orientation check):** Added pitch ±15° and bank ±15° margins. If not belly-down flat at ground contact — nose-in, tail-strike, wing-strike — you crash regardless of speed. A level contact lands safely. This felt right... until testers (me) learned to clutch: nose up hard at the last second, level the wings, and survive a 40 m/s vertical slam into the terrain.
 
-**Change (v3 — + vertical speed):** Added `velocity.y < -8 m/s` as a third trigger. You cannot flare your way out of a 1600 ft/min descent. Stall-spin pancake, steep approach, uncontrolled drop — caught. Now the only way to survive ground contact is to be both level and descending gently:
+**Change (v3 — + vertical speed):** Added `velocity.y < -8 m/s` as a third trigger. You cannot flare your way out of a 1600 ft/min descent. Stall-spin pancake, steep approach, uncontrolled drop — caught.
+
+**Change (v4 — + overspeed):** Re-added `impactSpeed >= crashSpeed` per-aircraft threshold. Even perfectly level with a gentle descent, landing at 300 knots tears the gear off. Keeps the original placeholder intent — fast ground contact is destructive regardless of composure.
+
+**Final logic:** To survive ground contact, all three must pass: belly-down flat attitude, gentle descent rate, and speed below the aircraft's structural limit.
 
 **Why:** A slow plane falling on its tail should not survive. Speed alone was a naive proxy — direction and attitude determine whether ground contact is a landing or a crash.
 

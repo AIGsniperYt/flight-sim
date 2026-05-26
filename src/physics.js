@@ -520,7 +520,8 @@ export function updatePlane(dt) {
                 const craftBank = Math.atan2(right.y, up.y);
                 const isLevel = Math.abs(craftPitch) <= deg(15) && Math.abs(craftBank) <= deg(15);
                 const hardDesc = velocity.y < -8;
-                if (!isLevel || hardDesc) {
+                const overspeed = impactSpeed >= AIRCRAFT.crashSpeed;
+                if (!isLevel || hardDesc || overspeed) {
                     _crashed = true;
                     _crashPos.copy(plane.position);
                     _crashSpeed = impactSpeed;
