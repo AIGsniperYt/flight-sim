@@ -209,7 +209,6 @@ function initMeshes(scene) {
                 uniform float flatnessFactor;
                 uniform float hillHeightMultiplier;
                 uniform float mountainHeightMultiplier;
-                uniform float lodScale;
                 varying float vHeight;
                 ${shader.vertexShader}
             `;
@@ -219,7 +218,6 @@ function initMeshes(scene) {
                 `
                 vec3 transformed = vec3( position );
                 float h = computeHeight(transformed.x, transformed.z, baseScale, hillScale, mountainScale, heightScale, flatnessFactor, hillHeightMultiplier, mountainHeightMultiplier);
-                h = floor(h * lodScale);
                 transformed.y = h;
                 vHeight = h;
                 `
@@ -236,16 +234,18 @@ function initMeshes(scene) {
                 '#include <color_fragment>',
                 `
                 #include <color_fragment>
-                vec3 tColor = vec3(1.0);
-                if (vHeight < heightScale * 0.3) {
-                    tColor = vec3(120.0/255.0, 204.0/255.0, 120.0/255.0);
-                } else if (vHeight < snowLevel) {
-                    float shade = clamp((128.0 + vHeight * 1.5) / 255.0, 120.0/255.0, 190.0/255.0);
-                    tColor = vec3(shade);
-                } else {
-                    tColor = vec3(245.0/255.0);
-                }
-                diffuseColor.rgb = tColor;
+                float h = vHeight;
+                vec3 lowColor = vec3(0.33, 0.55, 0.22);
+                vec3 midColor = vec3(0.55, 0.40, 0.25);
+                vec3 highColor = vec3(0.55, 0.50, 0.45);
+                vec3 snowColor = vec3(0.96, 0.96, 0.98);
+                float t1 = smoothstep(2.0, 10.0, h);
+                float t2 = smoothstep(18.0, 30.0, h);
+                float t3 = smoothstep(35.0, 42.0, h);
+                vec3 col = mix(lowColor, midColor, t1);
+                col = mix(col, highColor, t2);
+                col = mix(col, snowColor, t3);
+                diffuseColor.rgb = col;
                 `
             );
         };

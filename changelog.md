@@ -1,4 +1,36 @@
 # Changelog
+## **26/05/2026 — LOD Height Quantization Removed (Full-Precision Heights at All LODs)**
+
+**Change:** Removed `floor(h * lodScale)` from the vertex shader. All 5 LODs now compute terrain height at full floating-point precision. The `lodScale` uniform and its 0.001× multiplier for horizon LOD (which snapped heights to 1000m steps) are gone. Geometric LOD (chunk step size) remains — horizon still uses 50m between vertices — but every vertex sits at its correct mountain height.
+
+**Why:** The horizon LOD was producing zero vertical relief — a flat plane at the colour band edges. Faraway mountain silhouettes are now visible because the 4-vertex horizon chunks render at true heights instead of being quantised into oblivion.
+
+**Benchmark:** Cruise 55.0 avgFPS / 165.33ms gen / 40803 chunks / 107.3MB — vs pre-change cruise 77.9fps / 176.95ms gen / 40803 chunks / 103.2MB. FPS dropped ~29%; gen time actually *decreased* 7% (no more `floor` multiply + uniform read). The FPS hit is purely GPU-side: horizon chunks formerly rendered as nearly edge-on flat strips (most triangles back-face culled or sub-pixel), now they stand at full mountain height, every fragment facing the camera and causing overdraw with mid/ultra LOD overlap. CPU gen time unchanged, physics unchanged. Acceptable trade for infinite-horizon mountain silhouettes.
+
+---
+
+## **26/05/2026 — Terrain Vertex Colouring: Green→Brown→Grey→Snow**
+
+**Change:** Replaced the old hard-band grey gradient with smooth four-stage terrain colouring via `smoothstep` in the fragment shader. Low grass green (0–4m) blends to brown earth (4–18m), then grey rock (18–35m), then snow white (35m+). No textures, no CPU cost — pure shader math on the existing `vHeight` varying.
+
+**Why:** The previous grey-brown gradient was visually flat — essentially grey terrain with faint green lowlands and white peaks. Rich earthy tones (browns, warm greys) make the terrain look like actual terrain instead of a heightmap visualisation.
+
+---
+
+## **26/05/2026 — Crash Logic Emergent Behavior: Slope Landings Fail Without Slope Checks**
+
+**Cool Interesting Observation:** The three crash triggers (attitude ±15°, vertical speed < -8 m/s, overspeed) naturally prevent slope landings without any terrain-normal sampling. Approaching a slope requires maneuvring (pitch/bank changes) that pushes attitude outside ±15° at contact. Even a perfectly flat approach into a hillside causes the rising terrain to spike `impactSpeed` (overspeed) or produce a negative `velocity.y` as the ground rushes up (hardDesc). The safety net is emergent — none of the checks know about terrain angle, but together they approximate it. Post-landing bumps remain an issue (overspeed trips on horizontal rolling speed into a molehill); deferred to proper terrain-normal-based landing logic.
+
+---
+
+## **26/05/2026 — Throttle Moved to Arrow Keys**
+
+**Change:** Throttle up/down moved from Shift/Ctrl to ArrowUp/ArrowDown. Ctrl is now free for future bindings. Prevents accidental OS shortcut triggers (Ctrl+S, Ctrl+F, etc. already blocked at the document keydown level).
+
+**Why:** Shift and Ctrl overlap with browser shortcuts and modifier-key edge cases. Arrow keys are dedicated, unambiguous, and already prevented from scrolling the page.
+
+---
+
 ## **26/05/2026 — Airbrakes (Spacebar)**
 
 **Change:** Hold Spacebar to deploy airbrakes. Adds `q * AIRBRAKE_AREA * 1.0` drag force opposing velocity (flat-plate drag model, `AIRBRAKE_AREA = 2.0`). Doubles total drag at typical approach speeds. Visual indicator in debug panel. Flight state exposes `airbrakes` bool and `airbrakeDrag` force.
@@ -11,15 +43,15 @@
 
 **Change (v1 — speed-only):** Placeholder. If `impactSpeed >= crashSpeed`, you die. Fast = dead, simple. But direction matters — a slow plane falling on its tail should not survive.
 
-**Change (v2 — orientation check):** Added pitch ±15° and bank ±15° margins. If not belly-down flat at ground contact — nose-in, tail-strike, wing-strike — you crash regardless of speed. A level contact lands safely. This felt right... until testers (me) learned to clutch: nose up hard at the last second, level the wings, and survive a 40 m/s vertical slam into the terrain.
+**Change (v2 — orientation check):** Added pitch ±15° and bank ±15° margins. If not belly-down flat at ground contact — nose-in, tail-strike, wing-strike — you crash regardless of speed. A level contact lands safely. This felt right... until I learned how to clutch: nose up hard at the last second, level the wings, and survive a 40 m/s vertical slam into the terrain.
 
-**Change (v3 — + vertical speed):** Added `velocity.y < -8 m/s` as a third trigger. You cannot flare your way out of a 1600 ft/min descent. Stall-spin pancake, steep approach, uncontrolled drop — caught.
+**Change (v3 — vertical speed):** Added `velocity.y < -8 m/s` as a third trigger. You cannot flare your way out of a 1600 ft/min descent. Stall-spin pancake, steep approach, uncontrolled drop — caught.
 
-**Change (v4 — + overspeed):** Re-added `impactSpeed >= crashSpeed` per-aircraft threshold. Even perfectly level with a gentle descent, landing at 300 knots tears the gear off. Keeps the original placeholder intent — fast ground contact is destructive regardless of composure.
+**Change (v4 — overspeed):** Re-added `impactSpeed >= crashSpeed` per-aircraft threshold. Even perfectly level with a gentle descent, landing at 300 knots tears the gear off. Keeps the original placeholder intent — fast ground contact is destructive regardless of composure.
 
 **Final logic:** To survive ground contact, all three must pass: belly-down flat attitude, gentle descent rate, and speed below the aircraft's structural limit.
 
-**Why:** A slow plane falling on its tail should not survive. Speed alone was a naive proxy — direction and attitude determine whether ground contact is a landing or a crash.
+**Why:** A slow plane falling on its tail should not survive. Speed alone was a naive proxy — direction and descent speed determine whether ground contact is a landing or a crash.
 
 ---
 
@@ -27,7 +59,7 @@
 
 **Change:** Added a stall warning HUD element that appears when `flightState.stalled` is true. Three-line layout (`AIRSPEED LOW` / `STALL CONDITION` / `RECOVER IMMEDIATELY`) with a pulsed jitter effect that ramps urgency over the first 1.2s. Uses `performance.now()`-based sine modulation for opacity, jitter, scale, border glow, and text color. Hidden on crash recovery.
 
-**Why:** Binary blinking felt like a UI toy, not a flight computer. The steady clinical label with aggressive subtext and physical jitter reads as an aircraft system demanding attention rather than a game HUD element.
+**Why:** Binary blinking felt like a UI toy, not a flight computer. The steady clinical label with aggressive subtext and physical jitter feels more like an aircraft system.
 
 need to improve later
 
@@ -56,7 +88,9 @@ need to improve later
 - avgFPS: 77.9 cruise (was 64.9) — gen-time-heavy crossing frames dip to ~20 FPS, smooth frames hit 100+ FPS
 - Frustum re-eval now iterates 40803 entries → ~0.7ms per rotation event (was ~0.2ms at 10609)
 
-**User verdict:** "HOLY FUCK ITS AMAZING, now it feels a LOT more like infinity, and a lot less like a following square heightmap mesh!"
+Now it feels a LOT more like an infinite horizon, rather than a following square heightmap mesh
+
+I also realised that I havent implemented any form of asynchronous processing, and that this is a POWERFUL ace card I could use ANYTIME in the future to get fast INSTANT optimisation benefits
 
 ---
 

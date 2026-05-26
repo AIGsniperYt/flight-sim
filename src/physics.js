@@ -94,7 +94,7 @@ export const AIRCRAFT_PRESETS = {
     })
 };
 
-export const DEFAULT_AIRCRAFT_KEY = 'cessna172';
+export const DEFAULT_AIRCRAFT_KEY = 'f16';
 
 function getStartupAircraftKey() {
     if (typeof window === 'undefined') return DEFAULT_AIRCRAFT_KEY;
@@ -263,14 +263,13 @@ export function initPhysics(scene) {
     initDebugVectorArrows(scene);
     resetAircraftState();
 
-    document.addEventListener('keydown', (event) => keyboard[event.code] = true);
-    document.addEventListener('keyup', (event) => keyboard[event.code] = false);
-
-    window.addEventListener("keydown", function(e) {
-        if (["Space", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].indexOf(e.code) > -1) {
-            e.preventDefault();
+    document.addEventListener('keydown', (event) => {
+        keyboard[event.code] = true;
+        if (event.ctrlKey || event.metaKey || ["Space", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].indexOf(event.code) > -1) {
+            event.preventDefault();
         }
-    }, false);
+    });
+    document.addEventListener('keyup', (event) => keyboard[event.code] = false);
 }
 
 function initDebugVectorArrows(scene) {
@@ -430,8 +429,7 @@ export function updatePlane(dt) {
     const pitchInput = (keyboard['KeyW'] ? 1 : 0) + (keyboard['KeyS'] ? -1 : 0);
     const rollInput  = (keyboard['KeyA'] ? 1 : 0) + (keyboard['KeyD'] ? -1 : 0);
     const yawInput   = (keyboard['KeyQ'] ? 1 : 0) + (keyboard['KeyE'] ? -1 : 0);
-    const throttleInput = (keyboard['ShiftLeft'] || keyboard['ShiftRight'] ? 1 : 0) +
-        (keyboard['ControlLeft'] || keyboard['ControlRight'] ? -1 : 0);
+    const throttleInput = (keyboard['ArrowUp'] ? 1 : 0) + (keyboard['ArrowDown'] ? -1 : 0);
     const controls = AIRCRAFT.controls;
 
     throttle = THREE.MathUtils.clamp(throttle + throttleInput * dt, 0, 1);
