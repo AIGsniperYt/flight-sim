@@ -20,9 +20,11 @@ float snoise(vec2 P) {
   vec4 fy = Pf.yyww;
   vec4 i = permute(permute(ix) + iy);
   vec4 gx = fract(i * (1.0 / 41.0)) * 2.0 - 1.0 ;
-  vec4 gy = abs(gx) - 0.5 ;
+  vec4 gy = fract(i * (1.0 / 41.0) + 0.5) * 2.0 - 1.0 ;
   vec4 tx = floor(gx + 0.5);
+  vec4 ty = floor(gy + 0.5);
   gx = gx - tx;
+  gy = gy - ty;
   vec2 g00 = vec2(gx.x,gy.x);
   vec2 g10 = vec2(gx.y,gy.y);
   vec2 g01 = vec2(gx.z,gy.z);
@@ -49,7 +51,7 @@ float computeHeight(float wx, float wz, float baseScale, float hillScale, float 
     float continent = snoise(pos * continentScale) * heightScale * 2.0;
     float mountainMask = smoothstep(-15.0, 25.0, continent);
     float warpX = snoise(pos * warpScale) * 100.0;
-    float warpZ = snoise(pos * warpScale + 100.0) * 100.0;
+    float warpZ = snoise(pos * warpScale + vec2(5.2, 1.3)) * 100.0;
     vec2 warpPos = pos + vec2(warpX, warpZ);
     float base = snoise(warpPos * baseScale) * heightScale * flatnessFactor;
     float hill = snoise(warpPos * hillScale) * heightScale * hillHeightMultiplier;

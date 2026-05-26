@@ -1,4 +1,14 @@
 # Changelog
+## **26/05/2026 — Snoise Gradient Fix: Independent X/Y Gradients Eliminate Axis Artifacts**
+
+**The problem:** The Gustavson noise implementation assigns a random gradient vector to each grid cell, but the Y component was derived from the X component (`gy = |gx| - 0.5`). This made the Y component always *smaller* on average than the X component, so gradient vectors statistically pointed more in X than in Y. Across the whole noise field, this created slightly more rapid variation in X and slightly stretched features in Z. The ridged noise (`1 - |noise|`) amplified this subtle bias into visible Z-direction ridge lines.
+
+**The fix:** Each grid cell now gets two fully independent random numbers for the gradient vector (offset by `+0.5` in the fract lookup). Both components are symmetrically corrected to `[-0.5, 0.5]` with `floor(g + 0.5)`. The gradient distribution is now truly isotropic — no preferred axis.
+
+Applied identically to GLSL (`world.js`) and JS (`terrain.js`). Domain warp offset also changed to `vec2(5.2, 1.3)` for better noise field decorrelation.
+
+---
+
 ## **26/05/2026 — Phase 3: Continent-Masked Mountains + Elevation-Scaled Detail**
 
 **Change:** Two structural improvements from studying `test.html` (single-mountain example):

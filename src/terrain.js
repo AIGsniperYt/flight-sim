@@ -39,24 +39,30 @@ function snoise2D(x, y) {
     const gx1 = (i1 * (1 / 41) - Math.floor(i1 * (1 / 41))) * 2 - 1;
     const gx2 = (i2 * (1 / 41) - Math.floor(i2 * (1 / 41))) * 2 - 1;
     const gx3 = (i3 * (1 / 41) - Math.floor(i3 * (1 / 41))) * 2 - 1;
-    const gy0 = Math.abs(gx0) - 0.5, gy1 = Math.abs(gx1) - 0.5;
-    const gy2 = Math.abs(gx2) - 0.5, gy3 = Math.abs(gx3) - 0.5;
+    const gy0 = ((i0 * (1 / 41) + 0.5) - Math.floor(i0 * (1 / 41) + 0.5)) * 2 - 1;
+    const gy1 = ((i1 * (1 / 41) + 0.5) - Math.floor(i1 * (1 / 41) + 0.5)) * 2 - 1;
+    const gy2 = ((i2 * (1 / 41) + 0.5) - Math.floor(i2 * (1 / 41) + 0.5)) * 2 - 1;
+    const gy3 = ((i3 * (1 / 41) + 0.5) - Math.floor(i3 * (1 / 41) + 0.5)) * 2 - 1;
 
     const tx0 = Math.floor(gx0 + 0.5), tx1 = Math.floor(gx1 + 0.5);
     const tx2 = Math.floor(gx2 + 0.5), tx3 = Math.floor(gx3 + 0.5);
+    const ty0 = Math.floor(gy0 + 0.5), ty1 = Math.floor(gy1 + 0.5);
+    const ty2 = Math.floor(gy2 + 0.5), ty3 = Math.floor(gy3 + 0.5);
 
     const gx0f = gx0 - tx0, gx1f = gx1 - tx1;
     const gx2f = gx2 - tx2, gx3f = gx3 - tx3;
+    const gy0f = gy0 - ty0, gy1f = gy1 - ty1;
+    const gy2f = gy2 - ty2, gy3f = gy3 - ty3;
 
-    const n0 = taylorInvSqrt(gx0f * gx0f + gy0 * gy0);
-    const n1 = taylorInvSqrt(gx2f * gx2f + gy2 * gy2);
-    const n2 = taylorInvSqrt(gx1f * gx1f + gy1 * gy1);
-    const n3 = taylorInvSqrt(gx3f * gx3f + gy3 * gy3);
+    const n0 = taylorInvSqrt(gx0f * gx0f + gy0f * gy0f);
+    const n1 = taylorInvSqrt(gx2f * gx2f + gy2f * gy2f);
+    const n2 = taylorInvSqrt(gx1f * gx1f + gy1f * gy1f);
+    const n3 = taylorInvSqrt(gx3f * gx3f + gy3f * gy3f);
 
-    const g00x = gx0f * n0, g00y = gy0 * n0;
-    const g10x = gx1f * n2, g10y = gy1 * n2;
-    const g01x = gx2f * n1, g01y = gy2 * n1;
-    const g11x = gx3f * n3, g11y = gy3 * n3;
+    const g00x = gx0f * n0, g00y = gy0f * n0;
+    const g10x = gx1f * n2, g10y = gy1f * n2;
+    const g01x = gx2f * n1, g01y = gy2f * n1;
+    const g11x = gx3f * n3, g11y = gy3f * n3;
 
     const n00 = g00x * fx0 + g00y * fy0;
     const n10 = g10x * fx1 + g10y * fy1;
@@ -96,7 +102,7 @@ function generateTile(tileX, tileZ) {
             const continent = snoise2D(wx * continentScale, wz * continentScale) * heightScale * 2.0;
             const mountainMask = smoothstep(-15.0, 25.0, continent);
             const warpX = snoise2D(wx * warpScale, wz * warpScale) * 100.0;
-            const warpZ = snoise2D(wx * warpScale + 100.0, wz * warpScale + 100.0) * 100.0;
+            const warpZ = snoise2D(wx * warpScale + 100.0, wz * warpScale) * 100.0;
             const wwx = wx + warpX;
             const wwz = wz + warpZ;
             const base = snoise2D(wwx * baseScale, wwz * baseScale) * heightScale * flatnessFactor;
