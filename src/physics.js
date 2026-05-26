@@ -519,7 +519,8 @@ export function updatePlane(dt) {
                 const craftPitch = Math.asin(THREE.MathUtils.clamp(forward.y, -1, 1));
                 const craftBank = Math.atan2(right.y, up.y);
                 const isLevel = Math.abs(craftPitch) <= deg(15) && Math.abs(craftBank) <= deg(15);
-                if (!isLevel) {
+                const hardDesc = velocity.y < -8;
+                if (!isLevel || hardDesc) {
                     _crashed = true;
                     _crashPos.copy(plane.position);
                     _crashSpeed = impactSpeed;

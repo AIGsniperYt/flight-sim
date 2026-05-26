@@ -7,9 +7,13 @@
 
 ---
 
-## **26/05/2026 — Crash Logic: Orientation-Only**
+## **26/05/2026 — Crash Logic: From Speed-Only to Orientation + Vertical Speed**
 
-**Change:** Crash on ground contact now evaluates plane attitude (pitch ±15°, bank ±15°). If the plane is not belly-down flat — nose-in, tail-strike, wing-strike — it crashes regardless of speed or descent rate. A level contact is treated as a landing.
+**Change (v1 — speed-only):** Placeholder. If `impactSpeed >= crashSpeed`, you die. Fast = dead, simple. But direction matters — a slow plane falling on its tail should not survive.
+
+**Change (v2 — orientation check):** Added pitch ±15° and bank ±15° margins. If not belly-down flat at ground contact — nose-in, tail-strike, wing-strike — you crash regardless of speed. A level contact lands safely. This felt right... until testers (me) learned to clutch: nose up hard at the last second, level the wings, and survive a 40 m/s vertical slam into the terrain.
+
+**Change (v3 — + vertical speed):** Added `velocity.y < -8 m/s` as a third trigger. You cannot flare your way out of a 1600 ft/min descent. Stall-spin pancake, steep approach, uncontrolled drop — caught. Now the only way to survive ground contact is to be both level and descending gently:
 
 **Why:** A slow plane falling on its tail should not survive. Speed alone was a naive proxy — direction and attitude determine whether ground contact is a landing or a crash.
 
