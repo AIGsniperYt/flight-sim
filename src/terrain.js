@@ -10,6 +10,7 @@ const mountainHeightMultiplier = 4.0;
 const hillHeightMultiplier = 0.1;
 const continentScale = 0.0005;
 const warpScale = 0.002;
+const ridgeScale = 0.0003;
 const snowLevel = 0.99 * heightScale * 2;
 
 function snoise2D(x, y) {
@@ -102,12 +103,21 @@ function generateTile(tileX, tileZ) {
             const continent = snoise2D(wx * continentScale, wz * continentScale) * heightScale * 2.0;
             const mountainMask = smoothstep(-15.0, 25.0, continent);
             const warpX = snoise2D(wx * warpScale, wz * warpScale) * 100.0;
-            const warpZ = snoise2D(wx * warpScale + 100.0, wz * warpScale) * 100.0;
+            const warpZ = snoise2D(wx * warpScale + 5.2, wz * warpScale + 1.3) * 100.0;
             const wwx = wx + warpX;
             const wwz = wz + warpZ;
             const base = snoise2D(wwx * baseScale, wwz * baseScale) * heightScale * flatnessFactor;
             const hill = snoise2D(wwx * hillScale, wwz * hillScale) * heightScale * hillHeightMultiplier;
-            const mountain = ridgedNoise(wwx * mountainScale, wwz * mountainScale) * heightScale * mountainHeightMultiplier * mountainMask;
+
+            const ridgeAngle = snoise2D(wx * ridgeScale, wz * ridgeScale) * Math.PI;
+            const cosA = Math.cos(ridgeAngle);
+            const sinA = Math.sin(ridgeAngle);
+            const rlx = wwx * cosA + wwz * sinA;
+            const rlz = -wwx * sinA + wwz * cosA;
+            const sx = rlx * 0.3;
+            const sz = rlz;
+
+            const mountain = ridgedNoise(sx * mountainScale, sz * mountainScale) * heightScale * mountainHeightMultiplier * mountainMask;
             const preDetail = continent + base + hill + mountain;
             const elevationFactor = Math.max(0, Math.min(1, preDetail / (heightScale * 3.0)));
             const detail = snoise2D(wwx * 0.3, wwz * 0.3) * 1.0 * elevationFactor;

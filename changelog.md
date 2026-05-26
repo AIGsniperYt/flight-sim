@@ -1,4 +1,14 @@
 # Changelog
+## **26/05/2026 — Anisotropic Ridge Stretching Eliminates Coiling/Snaking Mountains**
+
+**Change:** Ridged noise for the mountain octave now uses anisotropic coordinate stretching with a slowly-varying direction field. A new `ridgeScale` uniform (0.0003) provides a very broad angle field that rotates the ridge orientation over large regions. The noise coordinates are rotated into a ridge-aligned frame and compressed 3.3× along the strike direction (`* 0.3`), creating mountain ranges that are linear over tens of kilometres with a consistent directional bias instead of coiling and snaking arbitrarily.
+
+**Why:** The previous domain warp bent ridges in all directions equally, creating twisty unrealistic mountain patterns. Real mountain ranges have a dominant strike direction from tectonic compression that's consistent over large regions. The anisotropic stretch models this without simulating tectonics — just a coordinate transform in the noise sampling.
+
+Applied identically to GLSL and JS paths.
+
+---
+
 ## **26/05/2026 — Snoise Gradient Fix: Independent X/Y Gradients Eliminate Axis Artifacts**
 
 **The problem:** The Gustavson noise implementation assigns a random gradient vector to each grid cell, but the Y component was derived from the X component (`gy = |gx| - 0.5`). This made the Y component always *smaller* on average than the X component, so gradient vectors statistically pointed more in X than in Y. Across the whole noise field, this created slightly more rapid variation in X and slightly stretched features in Z. The ridged noise (`1 - |noise|`) amplified this subtle bias into visible Z-direction ridge lines.

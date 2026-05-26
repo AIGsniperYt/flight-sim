@@ -46,7 +46,7 @@ float ridgedNoise(vec2 p) {
     return n * n;
 }
 
-float computeHeight(float wx, float wz, float baseScale, float hillScale, float mountainScale, float heightScale, float flatnessFactor, float hillHeightMultiplier, float mountainHeightMultiplier, float continentScale, float warpScale) {
+float computeHeight(float wx, float wz, float baseScale, float hillScale, float mountainScale, float heightScale, float flatnessFactor, float hillHeightMultiplier, float mountainHeightMultiplier, float continentScale, float warpScale, float ridgeScale) {
     vec2 pos = vec2(wx, wz);
     float continent = snoise(pos * continentScale) * heightScale * 2.0;
     float mountainMask = smoothstep(-15.0, 25.0, continent);
@@ -55,7 +55,17 @@ float computeHeight(float wx, float wz, float baseScale, float hillScale, float 
     vec2 warpPos = pos + vec2(warpX, warpZ);
     float base = snoise(warpPos * baseScale) * heightScale * flatnessFactor;
     float hill = snoise(warpPos * hillScale) * heightScale * hillHeightMultiplier;
-    float mountain = ridgedNoise(warpPos * mountainScale) * heightScale * mountainHeightMultiplier * mountainMask;
+
+    float ridgeAngle = snoise(pos * ridgeScale) * 3.14159;
+    float cosA = cos(ridgeAngle);
+    float sinA = sin(ridgeAngle);
+    vec2 ridgeLocal = vec2(
+        warpPos.x * cosA + warpPos.y * sinA,
+        -warpPos.x * sinA + warpPos.y * cosA
+    );
+    vec2 stretchPos = vec2(ridgeLocal.x * 0.3, ridgeLocal.y);
+
+    float mountain = ridgedNoise(stretchPos * mountainScale) * heightScale * mountainHeightMultiplier * mountainMask;
     float preDetail = continent + base + hill + mountain;
     float elevationFactor = clamp(preDetail / (heightScale * 3.0), 0.0, 1.0);
     float detail = snoise(warpPos * 0.3) * 1.0 * elevationFactor;
@@ -215,6 +225,7 @@ function initMeshes(scene) {
             shader.uniforms.mountainHeightMultiplier = { value: 4.0 };
             shader.uniforms.continentScale = { value: 0.0005 };
             shader.uniforms.warpScale = { value: 0.002 };
+            shader.uniforms.ridgeScale = { value: 0.0003 };
 
             shader.vertexShader = `
                 ${simplexNoiseGLSL}
@@ -227,6 +238,7 @@ function initMeshes(scene) {
                 uniform float mountainHeightMultiplier;
                 uniform float continentScale;
                 uniform float warpScale;
+                uniform float ridgeScale;
                 varying float vHeight;
                 ${shader.vertexShader}
             `;
@@ -235,7 +247,7 @@ function initMeshes(scene) {
                 '#include <begin_vertex>',
                 `
                 vec3 transformed = vec3( position );
-                float h = computeHeight(transformed.x, transformed.z, baseScale, hillScale, mountainScale, heightScale, flatnessFactor, hillHeightMultiplier, mountainHeightMultiplier, continentScale, warpScale);
+                float h = computeHeight(transformed.x, transformed.z, baseScale, hillScale, mountainScale, heightScale, flatnessFactor, hillHeightMultiplier, mountainHeightMultiplier, continentScale, warpScale, ridgeScale);
                 transformed.y = h;
                 vHeight = h;
                 `

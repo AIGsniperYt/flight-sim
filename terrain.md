@@ -69,6 +69,18 @@ ridgedNoise(p) = (1.0 - abs(snoise(p)))²
 - Range: 0 to +80m (always positive — no negative contribution)
 - Purpose: Generates the primary topographic relief — mountain ranges, ridges, valleys
 
+**Anisotropic stretching:** The ridged noise coordinates are rotated into a ridge-aligned frame before sampling:
+
+```
+ridgeAngle = snoise(rawPos * 0.0003) * π
+ridgeLocal.x = warpPos.x * cos(ridgeAngle) + warpPos.y * sin(angle)  // strike direction
+ridgeLocal.y = -warpPos.x * sin(ridgeAngle) + warpPos.y * cos(angle) // cross-strike
+stretchPos = (ridgeLocal.x * 0.3, ridgeLocal.y)  // 3.3× compression along strike
+mountain = ridgedNoise(stretchPos * 0.003) * ...  
+```
+
+The angle varies very slowly (period ~10500 units) so large regions have a consistent strike direction. The 0.3× compression elongates noise features along the strike, creating linear mountain ranges that don't coil or snake. Without this, the isotropic domain warp bends ridges in all directions equally, producing unnatural twisty patterns.
+
 **Continent masking:** The mountain amplitude is multiplied by `mountainMask = smoothstep(-15, 25, continent)`. In low-continent regions (continent below −15), the mask is 0 — flat plains with no mountains. In the transition band (−15 to 25), rolling hills emerge. Above 25, full mountain ranges appear. This ensures mountains cluster into distinct ranges constrained by the large-scale continent structure, rather than appearing uniformly everywhere.
 
 **Why ridged noise instead of `max(0, snoise)`:**
