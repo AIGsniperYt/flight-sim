@@ -1,4 +1,14 @@
 # Changelog
+## **26/05/2026 — Stall Warning + Pulse/Jitter Visual Indicator**
+
+**Change:** Added a stall warning HUD element that appears when `flightState.stalled` is true. Three-line layout (`AIRSPEED LOW` / `STALL CONDITION` / `RECOVER IMMEDIATELY`) with a pulsed jitter effect that ramps urgency over the first 1.2s. Uses `performance.now()`-based sine modulation for opacity, jitter, scale, border glow, and text color. Hidden on crash recovery.
+
+**Why:** Binary blinking felt like a UI toy, not a flight computer. The steady clinical label with aggressive subtext and physical jitter reads as an aircraft system demanding attention rather than a game HUD element.
+
+need to improve later
+
+---
+
 ## **26/05/2026 — Horizon LOD: Render Distance Doubled Again (50→100 chunks, 2500→5000 world units)**
 
 **Change:** Added 5th LOD level "horizon" extending render distance from 50 chunks (2500 world units) to 100 chunks (5000 world units). Edge fog blend improves from 71% (was visible) to 92% (near-invisible). At high altitude, the hard square edge is gone — terrain fades naturally into atmospheric haze.

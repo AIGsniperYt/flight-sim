@@ -271,6 +271,61 @@ minimapReadout.style.textAlign = 'center';
 minimapReadout.style.textShadow = '0 1px 2px #000';
 minimapContainer.appendChild(minimapReadout);
 
+const stallWarning = document.createElement('div');
+stallWarning.innerHTML = `
+  <div class="stall-kicker">AIRSPEED LOW</div>
+  <div class="stall-main">STALL CONDITION</div>
+  <div class="stall-sub">RECOVER IMMEDIATELY</div>
+`;
+
+Object.assign(stallWarning.style, {
+  position: 'fixed',
+  bottom: '12vh',
+  left: '50%',
+  transform: 'translateX(-50%) translateY(14px) scale(0.98)',
+  transformOrigin: 'center',
+  color: '#ff4b2e',
+  fontFamily: 'monospace',
+  textAlign: 'center',
+  letterSpacing: '0.12em',
+  padding: '10px 16px',
+  border: '1px solid rgba(255, 70, 30, 0.35)',
+  background: 'rgba(0,0,0,0.45)',
+  boxShadow: '0 0 16px rgba(255, 34, 0, 0.18), inset 0 0 0 1px rgba(255,255,255,0.04)',
+  zIndex: '10000',
+  pointerEvents: 'none',
+  display: 'none',
+  opacity: '0',
+  transition: 'opacity 120ms linear, transform 120ms linear, box-shadow 120ms linear, background 120ms linear',
+  willChange: 'transform, opacity',
+  minWidth: '240px'
+});
+
+stallWarning.querySelector('.stall-kicker').style.cssText = `
+  font-size: 11px;
+  opacity: 0.75;
+  letter-spacing: 0.35em;
+  margin-bottom: 4px;
+`;
+
+const stallMain = stallWarning.querySelector('.stall-main');
+stallMain.style.cssText = `
+  font-size: 34px;
+  font-weight: bold;
+  letter-spacing: 0.18em;
+  text-shadow: 0 0 10px rgba(255,34,0,0.4);
+`;
+
+const stallSub = stallWarning.querySelector('.stall-sub');
+stallSub.style.cssText = `
+  font-size: 12px;
+  opacity: 0.72;
+  letter-spacing: 0.28em;
+  margin-top: 4px;
+`;
+
+document.body.appendChild(stallWarning);
+
 const minimapCtx = minimapCanvas.getContext('2d');
 const minimapImage = minimapCtx.createImageData(minimapCanvas.width, minimapCanvas.height);
 const minimapForward = new THREE.Vector3();
@@ -423,6 +478,52 @@ function updateFlightInstrument() {
 
     horizonBand.style.transform = `translateY(${pitchOffset}px) rotate(${-bankDeg}deg)`;
     instrumentReadout.innerHTML = `ALT ${fmt(plane.position.y, 0)} m&nbsp;&nbsp; P ${fmt(pitchDeg, 0)}&deg;&nbsp;&nbsp; B ${fmt(bankDeg, 0)}&deg;`;
+}
+
+let _stallStart = 0;
+
+function updateStallWarning() {
+  const stalled = getFlightState().stalled;
+  const crashed = isCrashed();
+  const now = performance.now();
+
+  if (!stalled || crashed) {
+    _stallStart = 0;
+    stallWarning.style.opacity = '0';
+    stallWarning.style.transform = 'translateX(-50%) translateY(14px) scale(0.98)';
+    if (stallWarning.style.display !== 'none') {
+      stallWarning.style.display = 'none';
+    }
+    return;
+  }
+
+  if (_stallStart === 0) _stallStart = now;
+  const age = now - _stallStart;
+  const urgency = Math.min(1, age / 1200);
+  const pulse = 0.5 + 0.5 * Math.sin(now * 0.018);
+  const flash = 0.35 + 0.65 * pulse * urgency;
+
+  const jitterX = Math.sin(now * 0.09) * (0.8 + urgency * 1.8);
+  const jitterY = Math.cos(now * 0.12) * 0.6;
+  const scale = 1 + urgency * 0.03 + pulse * 0.02;
+
+  stallWarning.style.display = 'block';
+  stallWarning.style.opacity = '0.96';
+  stallWarning.style.transform =
+    `translateX(calc(-50% + ${jitterX}px)) translateY(${jitterY}px) scale(${scale})`;
+
+  stallWarning.style.borderColor = `rgba(255, 70, 30, ${0.35 + flash * 0.5})`;
+  stallWarning.style.background = `rgba(0, 0, 0, ${0.45 + urgency * 0.16})`;
+  stallWarning.style.boxShadow = `
+    0 0 ${16 + flash * 24}px rgba(255, 34, 0, ${0.12 + flash * 0.22}),
+    inset 0 0 0 1px rgba(255,255,255,0.04)
+  `;
+
+  stallMain.style.color = flash > 0.68 ? '#ffffff' : '#ff4b2e';
+  stallMain.style.textShadow = `0 0 ${10 + flash * 14}px rgba(255,34,0,${0.4 + flash * 0.4})`;
+  stallMain.style.letterSpacing = `${0.18 + urgency * 0.12}em`;
+
+  stallSub.style.opacity = String(0.55 + urgency * 0.45);
 }
 
 function drawMinimap(now) {
@@ -678,6 +779,7 @@ function animate() {
 
     updateDebug(dt * 1000);
     updateFlightInstrument();
+    updateStallWarning();
     drawMinimap(now);
 
     renderer.render(scene, camera);
