@@ -1,4 +1,20 @@
 # Changelog
+## **26/05/2026 — Airbrakes (Spacebar)**
+
+**Change:** Hold Spacebar to deploy airbrakes. Adds `q * AIRBRAKE_AREA * 1.0` drag force opposing velocity (flat-plate drag model, `AIRBRAKE_AREA = 2.0`). Doubles total drag at typical approach speeds. Visual indicator in debug panel. Flight state exposes `airbrakes` bool and `airbrakeDrag` force.
+
+**Why:** Needed for controlled landing approaches — allows speed bleed without zero-throttle coasting. Spacebar was already unused and prevented from scrolling.
+
+---
+
+## **26/05/2026 — Crash Logic: Orientation-Only**
+
+**Change:** Crash on ground contact now evaluates plane attitude (pitch ±15°, bank ±15°). If the plane is not belly-down flat — nose-in, tail-strike, wing-strike — it crashes regardless of speed or descent rate. A level contact is treated as a landing.
+
+**Why:** A slow plane falling on its tail should not survive. Speed alone was a naive proxy — direction and attitude determine whether ground contact is a landing or a crash.
+
+---
+
 ## **26/05/2026 — Stall Warning + Pulse/Jitter Visual Indicator**
 
 **Change:** Added a stall warning HUD element that appears when `flightState.stalled` is true. Three-line layout (`AIRSPEED LOW` / `STALL CONDITION` / `RECOVER IMMEDIATELY`) with a pulsed jitter effect that ramps urgency over the first 1.2s. Uses `performance.now()`-based sine modulation for opacity, jitter, scale, border glow, and text color. Hidden on crash recovery.

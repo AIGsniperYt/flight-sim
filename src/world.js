@@ -55,7 +55,7 @@ const RENDER_DISTANCE_ULTRA = 50;
 const RENDER_DISTANCE_HORIZON = 100;
 
 let visibleChunks = 0;
-let showGaps = true;
+let showGaps = false;
 
 const LOD_CONFIGS = {
     near: { step: 1, scale: 1.0, maxChunks: 250 },

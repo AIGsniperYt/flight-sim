@@ -439,7 +439,7 @@ function updateDebug(dt) {
             Flight Path: ${fmtDeg(flight.flightPathAngle)} deg<br>
             AoA: ${fmtDeg(flight.aoa)} deg${flight.stalled ? ' STALL' : ''}<br>
             Sideslip beta: ${fmtDeg(flight.sideslip)} deg<br>
-            Throttle: ${Math.round(flight.throttle * 100)}%<br>
+            Throttle: ${Math.round(flight.throttle * 100)}% &nbsp; ${flight.airbrakes ? 'AIRBRAKE' : ''}<br>
             Local Velocity: ${fmtVector(flight.localVelocity, 2)} m/s<br>
             Acceleration: ${fmtVector(flight.acceleration, 2)} m/s^2<br>
             <br>

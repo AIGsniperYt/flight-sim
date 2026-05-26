@@ -14,6 +14,7 @@ const DENSITY_SCALE_HEIGHT = 8500;
 const GRAVITY = 9.81;
 
 const deg = THREE.MathUtils.degToRad;
+const AIRBRAKE_AREA = 2.0;
 
 const DEFAULT_CONTROLS = {
     pitchSpeed: deg(55),
@@ -93,7 +94,7 @@ export const AIRCRAFT_PRESETS = {
     })
 };
 
-export const DEFAULT_AIRCRAFT_KEY = 'f16';
+export const DEFAULT_AIRCRAFT_KEY = 'cessna172';
 
 function getStartupAircraftKey() {
     if (typeof window === 'undefined') return DEFAULT_AIRCRAFT_KEY;
@@ -183,6 +184,7 @@ const flightState = {
     localVelocity: { x: 0, y: 0, z: 0 },
     acceleration: { x: 0, y: 0, z: 0 },
     totalForce: { x: 0, y: 0, z: 0 },
+    airbrakes: false, airbrakeDrag: 0,
     formulas: { lift: '', drag: '', thrust: '', weight: '', sideForce: '', acceleration: '' },
     constants: { key: '', name: '', mass: 0, wingArea: 0, wingSpan: 0, aspectRatio: 0, clMax: 0, stallAoA: 0, zeroLiftAoA: 0, inducedDragFactor: 0, maxThrust: 0 },
     stalled: false
@@ -478,6 +480,8 @@ export function updatePlane(dt) {
     const dragBreakdown = getDragBreakdown(liftCoefficient.cl, aoa);
     const liftForce = dynamicPressure * AIRCRAFT.wingArea * liftCoefficient.cl;
     const dragForce = dynamicPressure * AIRCRAFT.wingArea * dragBreakdown.cd;
+    const airbrakeOn = keyboard['Space'];
+    const airbrakeDrag = airbrakeOn ? dynamicPressure * AIRBRAKE_AREA * 1.0 : 0;
     const thrustForce = throttle * AIRCRAFT.maxThrust;
     const weightForce = AIRCRAFT.mass * GRAVITY;
     const sideCoefficient = THREE.MathUtils.clamp(-AIRCRAFT.sideForceSlope * sideslip, -1.5, 1.5);
@@ -491,7 +495,7 @@ export function updatePlane(dt) {
     }
 
     lift.copy(liftDir).multiplyScalar(liftForce);
-    drag.copy(velDir).multiplyScalar(-dragForce);
+    drag.copy(velDir).multiplyScalar(-(dragForce + airbrakeDrag));
     thrust.copy(forward).multiplyScalar(thrustForce);
     sideForce.copy(right).multiplyScalar(sideForceMag);
     weight.set(0, -weightForce, 0);
@@ -511,12 +515,20 @@ export function updatePlane(dt) {
         const impactSpeed = velocity.length();
         const terrainY = getHeightScaled(plane.position.x, plane.position.z, 1.0);
         if (plane.position.y < terrainY) {
-            if (_collisionsEnabled && impactSpeed >= AIRCRAFT.crashSpeed) {
-                _crashed = true;
-                _crashPos.copy(plane.position);
-                _crashSpeed = impactSpeed;
-                plane.visible = false;
-                for (const fn of _crashCallbacks) fn(_crashPos.clone(), _crashSpeed);
+            if (_collisionsEnabled) {
+                const craftPitch = Math.asin(THREE.MathUtils.clamp(forward.y, -1, 1));
+                const craftBank = Math.atan2(right.y, up.y);
+                const isLevel = Math.abs(craftPitch) <= deg(15) && Math.abs(craftBank) <= deg(15);
+                if (!isLevel) {
+                    _crashed = true;
+                    _crashPos.copy(plane.position);
+                    _crashSpeed = impactSpeed;
+                    plane.visible = false;
+                    for (const fn of _crashCallbacks) fn(_crashPos.clone(), _crashSpeed);
+                } else {
+                    plane.position.y = terrainY;
+                    if (velocity.y < 0) velocity.y = 0;
+                }
             } else {
                 plane.position.y = terrainY;
                 if (velocity.y < 0) velocity.y = 0;
@@ -553,11 +565,13 @@ export function updatePlane(dt) {
     flightState.thrustToDrag = dragForce > 0 ? thrustForce / dragForce : 0;
     flightState.stallSpeed = Math.sqrt((2 * weightForce) / (rho * AIRCRAFT.wingArea * AIRCRAFT.clMax));
     flightState.stalled = liftCoefficient.stalled;
+    flightState.airbrakes = airbrakeOn;
+    flightState.airbrakeDrag = airbrakeDrag;
     writeVector(flightState.localVelocity, localVelocity);
     writeVector(flightState.acceleration, acceleration);
     writeVector(flightState.totalForce, totalForce);
     flightState.formulas.lift = `L = q*S*CL = ${dynamicPressure.toFixed(1)}*${AIRCRAFT.wingArea.toFixed(1)}*${liftCoefficient.cl.toFixed(3)} = ${liftForce.toFixed(1)} N`;
-    flightState.formulas.drag = `D = q*S*CD = ${dynamicPressure.toFixed(1)}*${AIRCRAFT.wingArea.toFixed(1)}*${dragBreakdown.cd.toFixed(3)} = ${dragForce.toFixed(1)} N`;
+    flightState.formulas.drag = `D = q*S*CD = ${dynamicPressure.toFixed(1)}*${AIRCRAFT.wingArea.toFixed(1)}*${dragBreakdown.cd.toFixed(3)} = ${dragForce.toFixed(1)} N${airbrakeOn ? ` + airbrake ${airbrakeDrag.toFixed(1)} N` : ''}`;
     flightState.formulas.thrust = `T = throttle*Tmax = ${throttle.toFixed(2)}*${AIRCRAFT.maxThrust.toFixed(0)} = ${thrustForce.toFixed(1)} N`;
     flightState.formulas.weight = `W = m*g = ${AIRCRAFT.mass.toFixed(0)}*${GRAVITY.toFixed(2)} = ${weightForce.toFixed(1)} N`;
     flightState.formulas.sideForce = `Y = q*Sside*CY = ${dynamicPressure.toFixed(1)}*${AIRCRAFT.sideArea.toFixed(1)}*${sideCoefficient.toFixed(3)} = ${sideForceMag.toFixed(1)} N`;
