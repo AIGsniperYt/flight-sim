@@ -49,25 +49,36 @@ float ridgedNoise(vec2 p) {
 float computeHeight(float wx, float wz, float baseScale, float hillScale, float mountainScale, float heightScale, float flatnessFactor, float hillHeightMultiplier, float mountainHeightMultiplier, float continentScale, float warpScale, float ridgeScale) {
     vec2 pos = vec2(wx, wz);
     float continent = snoise(pos * continentScale) * heightScale * 2.0;
-    float mountainMask = smoothstep(-15.0, 25.0, continent);
     float warpX = snoise(pos * warpScale) * 100.0;
     float warpZ = snoise(pos * warpScale + vec2(5.2, 1.3)) * 100.0;
     vec2 warpPos = pos + vec2(warpX, warpZ);
+    
     float base = snoise(warpPos * baseScale) * heightScale * flatnessFactor;
     float hill = snoise(warpPos * hillScale) * heightScale * hillHeightMultiplier;
 
-    float ridgeAngle = snoise(pos * ridgeScale) * 3.14159;
-    float cosA = cos(ridgeAngle);
-    float sinA = sin(ridgeAngle);
-    vec2 ridgeLocal = vec2(
-        warpPos.x * cosA + warpPos.y * sinA,
-        -warpPos.x * sinA + warpPos.y * cosA
-    );
-    vec2 stretchPos = vec2(ridgeLocal.x * 0.3, ridgeLocal.y);
+    float mountainRegion = snoise(pos * 0.0005);
+    float mountainMask = smoothstep(0.1, 0.4, mountainRegion) * smoothstep(0.0, 25.0, continent);
 
-    float mountain = ridgedNoise(stretchPos * mountainScale) * heightScale * mountainHeightMultiplier * mountainMask;
+    float rawMountain = max(0.0, snoise(warpPos * 0.0003));
+    float mountainBase = rawMountain * rawMountain * 800.0 * mountainMask;
+
+    float n1 = snoise(warpPos * 0.001) * 150.0;
+    float n2 = snoise(warpPos * 0.003) * 50.0;
+    float n3 = snoise(warpPos * 0.009) * 15.0;
+    float n4 = ridgedNoise(warpPos * 0.015) * 10.0;
+    float rockyDetail = n1 + n2 + n3 + n4;
+    
+    float r1 = ridgedNoise(warpPos * 0.002) * 150.0;
+    float r2 = ridgedNoise(warpPos * 0.006) * 60.0;
+    float r3 = ridgedNoise(warpPos * 0.015) * 15.0;
+    float peakJaggedness = r1 + r2 + r3;
+    float peakMask = smoothstep(150.0, 500.0, mountainBase);
+    
+    float mountainDetail = rockyDetail * smoothstep(10.0, 200.0, mountainBase) + peakJaggedness * peakMask;
+    float mountain = mountainBase + mountainDetail;
+
     float preDetail = continent + base + hill + mountain;
-    float elevationFactor = clamp(preDetail / (heightScale * 3.0), 0.0, 1.0);
+    float elevationFactor = clamp(preDetail / (heightScale * 6.0), 0.0, 1.0);
     float detail = snoise(warpPos * 0.3) * 1.0 * elevationFactor;
     return preDetail + detail;
 }
@@ -92,11 +103,11 @@ const LOD_CONFIGS = {
 };
 
 const LOD_HEIGHT_RANGES = {
-    near: { min: -10, max: 90 },
-    mid: { min: -5, max: 45 },
-    far: { min: -2, max: 10 },
-    ultra: { min: -1, max: 1 },
-    horizon: { min: -1, max: 1 }
+    near: { min: -10, max: 1000 },
+    mid: { min: -5, max: 800 },
+    far: { min: -2, max: 400 },
+    ultra: { min: -1, max: 100 },
+    horizon: { min: -1, max: 25 }
 };
 const FRUSTUM_MARGIN = CHUNK_SIZE;
 
@@ -225,7 +236,7 @@ function initMeshes(scene) {
             shader.uniforms.mountainHeightMultiplier = { value: 4.0 };
             shader.uniforms.continentScale = { value: 0.0005 };
             shader.uniforms.warpScale = { value: 0.002 };
-            shader.uniforms.ridgeScale = { value: 0.0003 };
+            shader.uniforms.ridgeScale = { value: 0.001 };
 
             shader.vertexShader = `
                 ${simplexNoiseGLSL}
@@ -264,13 +275,13 @@ function initMeshes(scene) {
                 `
                 #include <color_fragment>
                 float h = vHeight;
-                vec3 lowColor = vec3(0.33, 0.55, 0.22);
-                vec3 midColor = vec3(0.55, 0.40, 0.25);
-                vec3 highColor = vec3(0.55, 0.50, 0.45);
-                vec3 snowColor = vec3(0.96, 0.96, 0.98);
-                float t1 = smoothstep(2.0, 10.0, h);
-                float t2 = smoothstep(18.0, 30.0, h);
-                float t3 = smoothstep(35.0, 42.0, h);
+                vec3 lowColor = vec3(0.25, 0.48, 0.20);
+                vec3 midColor = vec3(0.42, 0.32, 0.20);
+                vec3 highColor = vec3(0.45, 0.45, 0.48);
+                vec3 snowColor = vec3(0.95, 0.95, 0.98);
+                float t1 = smoothstep(80.0, 150.0, h);
+                float t2 = smoothstep(150.0, 300.0, h);
+                float t3 = smoothstep(500.0, 650.0, h);
                 vec3 col = mix(lowColor, midColor, t1);
                 col = mix(col, highColor, t2);
                 col = mix(col, snowColor, t3);

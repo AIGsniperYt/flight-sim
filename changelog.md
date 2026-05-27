@@ -1,4 +1,46 @@
 # Changelog
+
+## **27/05/2026 — G-Force Calculation + Visual Overlay**
+
+**Change:** Added G-force tracking and visual effects to the flight system:
+
+- **G-force calculation:** `rawG = |acceleration| / 9.81 + 1.0` computed every physics frame from the total acceleration vector. Smoothed with a low-pass filter (8/s blend factor) to prevent jitter. Exposed as `flightState.gForce`.
+- **Debug overlay:** G-Force value shown in the Flight State section with a red "!! PULLING G !!" warning when exceeding 5G.
+- **Visual overlay:** A full-screen `div` with `pointer-events: none` applies vignette and tunnel vision effects:
+  - 0–4G: No effect (normal flight envelope)
+  - 4–6G: Edges darken (grey-out begins), mild vignette
+  - 6–9G: Tunnel vision narrows progressively, vision darkens toward blackout
+  - 9G+: Near-total blackout (tiny central tunnel, very dark)
+  - Negative G (push-over, gForce < 0.8): Red-tinted vignette simulating red-out (blood rush to head)
+- Effects use `box-shadow: inset` for the vignette ring and `radial-gradient` for the shrinking tunnel. Updated every frame with smooth CSS transitions.
+
+**Files changed:** `physics.js` (gForce calc + smoothing), `main.js` (debug display + overlay DOM + update function).
+
+---
+
+## **26/05/2026 — Mountain Transition Smoothing (Power Curves)**
+
+**Change:** Applied a squaring curve to the mountain base noise in both the GLSL shader (`world.js`) and the CPU terrain helper (`terrain.js`):
+- `mountainBase = max(0.0, snoise(...))^2 * 800.0 * mountainMask`.
+
+**Why:** The previous linear noise clipping caused mountains to rise from the plains with an abrupt, non-zero slope, creating awkward step-like bumps at the bases of ranges. Squaring the positive noise ensures the slope is exactly `0.0` at the boundary, allowing mountains to start perfectly flat and parallel to the grassy plains, before gently curving upwards.
+
+---
+
+## **26/05/2026 — Balanced Terrain Color Bands & Jagged Alpine Peaks**
+
+**Change:** Refined mountain geometry and coloring rules in `world.js` and `terrain.js`:
+- **Jagged Peak Detail:** Blended high-frequency, high-amplitude `ridgedNoise` octaves exclusively at high elevations using a `peakMask` (`smoothstep(150.0, 500.0, mountainBase)`). This preserves the bulky earth/rock bases of mountains while carving highly realistic, razor-sharp alpine summits at the tops.
+- **Realistic Coloring Bands:** Scaled color thresholds to match the new `800m` mountain altitudes:
+  - Lush Valley Grass: up to `80m`, keeping valleys completely green and eliminating flatland brown patches.
+  - Hillside Dirt: transitions from `80m` to `150m`.
+  - Mountain Rock: slate-grey transitions from `150m` to `300m`.
+  - Alpine Snow: transitions from `500m` to `650m`, ensuring low-lying mountains remain rocky and snow-free.
+
+**Why:** Colors were previously thresholded too low, turning all rising land brown and all hills/mountains into white monoliths of snow. Additionally, mountain shapes lacked structural contrast between bulky bases and sharp crests.
+
+---
+
 ## **26/05/2026 — Anisotropic Ridge Stretching Eliminates Coiling/Snaking Mountains**
 
 **Change:** Ridged noise for the mountain octave now uses anisotropic coordinate stretching with a slowly-varying direction field. A new `ridgeScale` uniform (0.0003) provides a very broad angle field that rotates the ridge orientation over large regions. The noise coordinates are rotated into a ridge-aligned frame and compressed 3.3× along the strike direction (`* 0.3`), creating mountain ranges that are linear over tens of kilometres with a consistent directional bias instead of coiling and snaking arbitrarily.

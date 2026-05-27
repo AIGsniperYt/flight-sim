@@ -173,6 +173,8 @@ function getAircraftConstants() {
     };
 }
 
+let _smoothedGForce = 1.0;
+
 const flightState = {
     aircraft: { key: '', name: '', description: '' },
     speed: 0, throttle, aoa: 0, sideslip: 0, pitch: 0, bank: 0,
@@ -187,7 +189,8 @@ const flightState = {
     airbrakes: false, airbrakeDrag: 0,
     formulas: { lift: '', drag: '', thrust: '', weight: '', sideForce: '', acceleration: '' },
     constants: { key: '', name: '', mass: 0, wingArea: 0, wingSpan: 0, aspectRatio: 0, clMax: 0, stallAoA: 0, zeroLiftAoA: 0, inducedDragFactor: 0, maxThrust: 0 },
-    stalled: false
+    stalled: false,
+    gForce: 1.0
 };
 syncFlightStateAircraft();
 
@@ -512,7 +515,8 @@ export function updatePlane(dt) {
     if (!_crashed) {
         const impactSpeed = velocity.length();
         const terrainY = getHeightScaled(plane.position.x, plane.position.z, 1.0);
-        if (plane.position.y < terrainY) {
+        const lowestBodyY = plane.position.y - 2 * Math.abs(right.y) - 0.5 * Math.abs(up.y) - 4 * Math.abs(forward.y);
+        if (lowestBodyY < terrainY) {
             if (_collisionsEnabled) {
                 const craftPitch = Math.asin(THREE.MathUtils.clamp(forward.y, -1, 1));
                 const craftBank = Math.atan2(right.y, up.y);
@@ -576,6 +580,9 @@ export function updatePlane(dt) {
     flightState.formulas.weight = `W = m*g = ${AIRCRAFT.mass.toFixed(0)}*${GRAVITY.toFixed(2)} = ${weightForce.toFixed(1)} N`;
     flightState.formulas.sideForce = `Y = q*Sside*CY = ${dynamicPressure.toFixed(1)}*${AIRCRAFT.sideArea.toFixed(1)}*${sideCoefficient.toFixed(3)} = ${sideForceMag.toFixed(1)} N`;
     flightState.formulas.acceleration = `a = F/m = (${totalForce.x.toFixed(1)}, ${totalForce.y.toFixed(1)}, ${totalForce.z.toFixed(1)})/${AIRCRAFT.mass.toFixed(0)} = (${acceleration.x.toFixed(2)}, ${acceleration.y.toFixed(2)}, ${acceleration.z.toFixed(2)}) m/s^2`;
+    const rawG = acceleration.length() / GRAVITY + 1.0;
+    _smoothedGForce += (rawG - _smoothedGForce) * Math.min(1, dt * 8);
+    flightState.gForce = _smoothedGForce;
     _physicsTime = performance.now() - _start;
     updateDebugVectorArrows();
 }

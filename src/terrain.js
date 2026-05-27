@@ -10,7 +10,7 @@ const mountainHeightMultiplier = 4.0;
 const hillHeightMultiplier = 0.1;
 const continentScale = 0.0005;
 const warpScale = 0.002;
-const ridgeScale = 0.0003;
+const ridgeScale = 0.001;
 const snowLevel = 0.99 * heightScale * 2;
 
 function snoise2D(x, y) {
@@ -101,25 +101,37 @@ function generateTile(tileX, tileZ) {
             const wx = x + originX;
             const wz = z + originZ;
             const continent = snoise2D(wx * continentScale, wz * continentScale) * heightScale * 2.0;
-            const mountainMask = smoothstep(-15.0, 25.0, continent);
             const warpX = snoise2D(wx * warpScale, wz * warpScale) * 100.0;
             const warpZ = snoise2D(wx * warpScale + 5.2, wz * warpScale + 1.3) * 100.0;
             const wwx = wx + warpX;
             const wwz = wz + warpZ;
+            
             const base = snoise2D(wwx * baseScale, wwz * baseScale) * heightScale * flatnessFactor;
             const hill = snoise2D(wwx * hillScale, wwz * hillScale) * heightScale * hillHeightMultiplier;
 
-            const ridgeAngle = snoise2D(wx * ridgeScale, wz * ridgeScale) * Math.PI;
-            const cosA = Math.cos(ridgeAngle);
-            const sinA = Math.sin(ridgeAngle);
-            const rlx = wwx * cosA + wwz * sinA;
-            const rlz = -wwx * sinA + wwz * cosA;
-            const sx = rlx * 0.3;
-            const sz = rlz;
+            const mountainRegion = snoise2D(wx * 0.0005, wz * 0.0005);
+            const mountainMask = smoothstep(0.1, 0.4, mountainRegion) * smoothstep(0.0, 25.0, continent);
 
-            const mountain = ridgedNoise(sx * mountainScale, sz * mountainScale) * heightScale * mountainHeightMultiplier * mountainMask;
+            const rawMountain = Math.max(0, snoise2D(wwx * 0.0003, wwz * 0.0003));
+            const mountainBase = rawMountain * rawMountain * 800.0 * mountainMask;
+
+            const n1 = snoise2D(wwx * 0.001, wwz * 0.001) * 150.0;
+            const n2 = snoise2D(wwx * 0.003, wwz * 0.003) * 50.0;
+            const n3 = snoise2D(wwx * 0.009, wwz * 0.009) * 15.0;
+            const n4 = ridgedNoise(wwx * 0.015, wwz * 0.015) * 10.0;
+            const rockyDetail = n1 + n2 + n3 + n4;
+            
+            const r1 = ridgedNoise(wwx * 0.002, wwz * 0.002) * 150.0;
+            const r2 = ridgedNoise(wwx * 0.006, wwz * 0.006) * 60.0;
+            const r3 = ridgedNoise(wwx * 0.015, wwz * 0.015) * 15.0;
+            const peakJaggedness = r1 + r2 + r3;
+            const peakMask = smoothstep(150.0, 500.0, mountainBase);
+
+            const mountainDetail = rockyDetail * smoothstep(10.0, 200.0, mountainBase) + peakJaggedness * peakMask;
+            const mountain = mountainBase + mountainDetail;
+
             const preDetail = continent + base + hill + mountain;
-            const elevationFactor = Math.max(0, Math.min(1, preDetail / (heightScale * 3.0)));
+            const elevationFactor = Math.max(0, Math.min(1, preDetail / (heightScale * 6.0)));
             const detail = snoise2D(wwx * 0.3, wwz * 0.3) * 1.0 * elevationFactor;
             data[i++] = preDetail + detail;
         }
@@ -169,18 +181,38 @@ export function getHeightScaled(worldX, worldZ, lodScale = 1.0) {
 }
 
 export function getTerrainColorAt(worldX, worldZ) {
-    const y = getHeight(worldX, worldZ);
+    const h = getHeight(worldX, worldZ);
 
-    if (y < heightScale * 0.3) {
-        return { r: 120, g: 204, b: 120 };
-    }
+    const lowColor = { r: 0.25, g: 0.48, b: 0.20 };
+    const midColor = { r: 0.42, g: 0.32, b: 0.20 };
+    const highColor = { r: 0.45, g: 0.45, b: 0.48 };
+    const snowColor = { r: 0.95, g: 0.95, b: 0.98 };
 
-    if (y < snowLevel) {
-        const shade = Math.max(120, Math.min(190, 128 + y * 1.5));
-        return { r: shade, g: shade, b: shade };
-    }
+    const clampVal = (val, min, max) => Math.max(min, Math.min(max, val));
+    const smoothstepVal = (edge0, edge1, x) => {
+        const t = clampVal((x - edge0) / (edge1 - edge0), 0.0, 1.0);
+        return t * t * (3.0 - 2.0 * t);
+    };
 
-    return { r: 245, g: 245, b: 245 };
+    const t1 = smoothstepVal(80.0, 150.0, h);
+    const t2 = smoothstepVal(150.0, 300.0, h);
+    const t3 = smoothstepVal(500.0, 650.0, h);
+
+    const mixColors = (c1, c2, t) => ({
+        r: c1.r + (c2.r - c1.r) * t,
+        g: c1.g + (c2.g - c1.g) * t,
+        b: c1.b + (c2.b - c1.b) * t
+    });
+
+    let col = mixColors(lowColor, midColor, t1);
+    col = mixColors(col, highColor, t2);
+    col = mixColors(col, snowColor, t3);
+
+    return {
+        r: Math.round(col.r * 255),
+        g: Math.round(col.g * 255),
+        b: Math.round(col.b * 255)
+    };
 }
 
 export function getTerrainStats() {
@@ -203,7 +235,30 @@ export function clearCache() {
 }
 
 export function getColorComponents(y) {
-    if (y < heightScale * 0.3) return { r: 0.47, g: 0.8, b: 0.47 };
-    if (y < snowLevel) return { r: 0.5, g: 0.5, b: 0.5 };
-    return { r: 1.0, g: 1.0, b: 1.0 };
+    const lowColor = { r: 0.25, g: 0.48, b: 0.20 };
+    const midColor = { r: 0.42, g: 0.32, b: 0.20 };
+    const highColor = { r: 0.45, g: 0.45, b: 0.48 };
+    const snowColor = { r: 0.95, g: 0.95, b: 0.98 };
+
+    const clampVal = (val, min, max) => Math.max(min, Math.min(max, val));
+    const smoothstepVal = (edge0, edge1, x) => {
+        const t = clampVal((x - edge0) / (edge1 - edge0), 0.0, 1.0);
+        return t * t * (3.0 - 2.0 * t);
+    };
+
+    const t1 = smoothstepVal(80.0, 150.0, y);
+    const t2 = smoothstepVal(150.0, 300.0, y);
+    const t3 = smoothstepVal(500.0, 650.0, y);
+
+    const mixColors = (c1, c2, t) => ({
+        r: c1.r + (c2.r - c1.r) * t,
+        g: c1.g + (c2.g - c1.g) * t,
+        b: c1.b + (c2.b - c1.b) * t
+    });
+
+    let col = mixColors(lowColor, midColor, t1);
+    col = mixColors(col, highColor, t2);
+    col = mixColors(col, snowColor, t3);
+
+    return col;
 }

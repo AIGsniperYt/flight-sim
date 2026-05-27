@@ -326,6 +326,21 @@ stallSub.style.cssText = `
 
 document.body.appendChild(stallWarning);
 
+const gForceOverlay = document.createElement('div');
+gForceOverlay.id = 'g-force-overlay';
+Object.assign(gForceOverlay.style, {
+  position: 'fixed',
+  top: '0',
+  left: '0',
+  width: '100%',
+  height: '100%',
+  pointerEvents: 'none',
+  zIndex: '9999',
+  transition: 'opacity 80ms linear',
+  opacity: '0'
+});
+document.body.appendChild(gForceOverlay);
+
 const minimapCtx = minimapCanvas.getContext('2d');
 const minimapImage = minimapCtx.createImageData(minimapCanvas.width, minimapCanvas.height);
 const minimapForward = new THREE.Vector3();
@@ -442,6 +457,7 @@ function updateDebug(dt) {
             Throttle: ${Math.round(flight.throttle * 100)}% &nbsp; ${flight.airbrakes ? 'AIRBRAKE' : ''}<br>
             Local Velocity: ${fmtVector(flight.localVelocity, 2)} m/s<br>
             Acceleration: ${fmtVector(flight.acceleration, 2)} m/s^2<br>
+            G-Force: ${fmt(flight.gForce, 2)} G${flight.gForce > 5 ? ' <span style="color:#ff4422;font-weight:bold">!! PULLING G !!</span>' : ''}<br>
             <br>
             <b>Aero Formula Log</b><br>
             rho: ${fmt(flight.rho, 3)} kg/m^3<br>
@@ -524,6 +540,37 @@ function updateStallWarning() {
   stallMain.style.letterSpacing = `${0.18 + urgency * 0.12}em`;
 
   stallSub.style.opacity = String(0.55 + urgency * 0.45);
+}
+
+function updateGForceEffect() {
+  const g = getFlightState().gForce;
+  const absG = Math.abs(g);
+  const overG = Math.max(0, absG - 4);
+  const severity = Math.min(1, overG / 5);
+  const tunnelNarrow = Math.min(1, Math.max(0, absG - 5) / 4);
+
+  const darken = severity * 0.85;
+  const tunnelSize = 1 - tunnelNarrow * 0.55;
+  const redTint = g < 0.8 ? Math.min(1, (0.8 - g) * 5) * 0.3 : 0;
+
+  if (severity > 0 || redTint > 0) {
+    gForceOverlay.style.opacity = Math.max(severity, redTint).toFixed(3);
+    gForceOverlay.style.boxShadow = `inset 0 0 ${120 + severity * 200}px rgba(0,0,0,${darken})`;
+    gForceOverlay.style.background = `radial-gradient(circle at center,
+      transparent ${tunnelSize * 50}%,
+      rgba(0,0,0,${darken * 0.7}) ${tunnelSize * 70}%,
+      rgba(0,0,0,${darken}) ${tunnelSize * 90}%
+    )`;
+    if (redTint > 0) {
+      gForceOverlay.style.background = `radial-gradient(circle at center,
+        rgba(60,0,0,${redTint * 0.15}) ${tunnelSize * 40}%,
+        rgba(80,0,0,${redTint * 0.3}) ${tunnelSize * 65}%,
+        rgba(40,0,0,${redTint * 0.5}) ${tunnelSize * 85}%
+      )`;
+    }
+  } else {
+    gForceOverlay.style.opacity = '0';
+  }
 }
 
 function drawMinimap(now) {
@@ -780,6 +827,7 @@ function animate() {
     updateDebug(dt * 1000);
     updateFlightInstrument();
     updateStallWarning();
+    updateGForceEffect();
     drawMinimap(now);
 
     renderer.render(scene, camera);
