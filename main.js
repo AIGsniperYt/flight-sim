@@ -70,6 +70,7 @@ let cameraMode = 'chase';
 let debugVisible = true;
 let debugArrowsVisible = true;
 let debugReferenceArrowsVisible = false;
+let gForceEffectEnabled = false;
 let flightInstrumentVisible = true;
 let minimapVisible = true;
 
@@ -371,6 +372,10 @@ document.addEventListener('keydown', (event) => {
         event.preventDefault();
         debugReferenceArrowsVisible = !debugReferenceArrowsVisible;
         applyDebugArrowVisibility();
+    } else if (event.code === 'KeyG' && !event.ctrlKey && !event.metaKey) {
+        event.preventDefault();
+        gForceEffectEnabled = !gForceEffectEnabled;
+        if (!gForceEffectEnabled) gForceOverlay.style.opacity = '0';
     } else if (event.code === 'KeyC' && !event.ctrlKey && !event.metaKey) {
         resetChaseCamera();
     } else if (event.code === 'KeyJ' && !event.ctrlKey && !event.metaKey) {
@@ -457,7 +462,7 @@ function updateDebug(dt) {
             Throttle: ${Math.round(flight.throttle * 100)}% &nbsp; ${flight.airbrakes ? 'AIRBRAKE' : ''}<br>
             Local Velocity: ${fmtVector(flight.localVelocity, 2)} m/s<br>
             Acceleration: ${fmtVector(flight.acceleration, 2)} m/s^2<br>
-            G-Force: ${fmt(flight.gForce, 2)} G${flight.gForce > 5 ? ' <span style="color:#ff4422;font-weight:bold">!! PULLING G !!</span>' : ''}<br>
+            G-Force: ${fmt(flight.gForce, 2)} G &nbsp; <b>G</b> ${gForceEffectEnabled ? 'FX:ON' : 'FX:OFF'}${flight.gForce > 5 ? ' <span style="color:#ff4422;font-weight:bold">!! PULLING G !!</span>' : ''}<br>
             <br>
             <b>Aero Formula Log</b><br>
             rho: ${fmt(flight.rho, 3)} kg/m^3<br>
@@ -543,6 +548,7 @@ function updateStallWarning() {
 }
 
 function updateGForceEffect() {
+  if (!gForceEffectEnabled) { gForceOverlay.style.opacity = '0'; return; }
   const g = getFlightState().gForce;
   const absG = Math.abs(g);
   const overG = Math.max(0, absG - 4);

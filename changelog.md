@@ -14,7 +14,7 @@
   - Negative G (push-over, gForce < 0.8): Red-tinted vignette simulating red-out (blood rush to head)
 - Effects use `box-shadow: inset` for the vignette ring and `radial-gradient` for the shrinking tunnel. Updated every frame with smooth CSS transitions.
 
-**Files changed:** `physics.js` (gForce calc + smoothing), `main.js` (debug display + overlay DOM + update function).
+Also, I had failed in an attempt to make crash logic more consistent, as there were still scenarios which should be a crash, but did not crash the plane - for example I could slide along the ground on the nose of the plane - I suspect its because collisions are center of plane compared with heightmap value, so technically the nose could keep the center up above the ground and therefore avoid collisions until a bump crashed it.
 
 ---
 

@@ -515,8 +515,7 @@ export function updatePlane(dt) {
     if (!_crashed) {
         const impactSpeed = velocity.length();
         const terrainY = getHeightScaled(plane.position.x, plane.position.z, 1.0);
-        const lowestBodyY = plane.position.y - 2 * Math.abs(right.y) - 0.5 * Math.abs(up.y) - 4 * Math.abs(forward.y);
-        if (lowestBodyY < terrainY) {
+        if (plane.position.y < terrainY) {
             if (_collisionsEnabled) {
                 const craftPitch = Math.asin(THREE.MathUtils.clamp(forward.y, -1, 1));
                 const craftBank = Math.atan2(right.y, up.y);
