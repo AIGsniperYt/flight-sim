@@ -29,17 +29,20 @@ profile = staircase(pf)                   // mapped to 0/80/200/400/600m tiers
 Where `staircase` is:
 
 ```
-t = smoothstep(-0.5, -0.35, pf); profile = mix(0, 80, t)     // lowlands → 80m plateau
-t = smoothstep(-0.1, 0.05, pf);  profile = mix(80, 200, t)   // 80m → 200m plateau
-t = smoothstep(0.3, 0.45, pf);   profile = mix(200, 400, t)  // 200m → 400m plateau
-t = smoothstep(0.7, 0.85, pf);   profile = mix(400, 600, t)  // 400m → 600m platform
+t = smoothstep(-0.7, -0.4, pf);  profile = mix(0, 80, t)    // 0m lowland → 80m plateau (gentle, width 0.3)
+t = smoothstep(-0.1, 0.1, pf);   profile = mix(80, 200, t)  // 80m → 200m plateau (moderate, width 0.2)
+t = smoothstep(0.3, 0.4, pf);    profile = mix(200, 400, t) // 200m → 400m high plateau (sharp, width 0.1)
+t = smoothstep(0.6, 0.7, pf);    profile = mix(400, 600, t) // 400m → 600m platform (sharp, width 0.1)
 ```
 
 - Period: ~20944 world units (one full noise cycle of the shaping field)
 - Range: 0m to 600m (five discrete tiers)
-- Purpose: Creates broad plateaus at 0, 80, 200, 400, and 600m with steep escarpments between them. The `smoothstep` transitions are only 0.15 wide in noise space — narrow enough to produce visible cliff bands, wide enough to avoid jagged edges.
+- Purpose: Creates broad plateaus at 0, 80, 200, 400, and 600m with transitions between them.
+- Lower transitions (0→80m, 80→200m) use wider noise ranges (0.3, 0.2) — these produce gentle rolling ascents between lowland and midland plateaus. A sharp cliff in the middle of a grassland looks unnatural, so these are kept gradual.
+- Upper transitions (200→400m, 400→600m) use narrow noise ranges (0.1) — these are mountain-belt edges where steep escarpments look correct and dramatic.
+- The 0m lowland tier is deliberately rare (only terrain below −0.7 in noise space, ~7–10% of land area). This creates infrequent basins that can logically hold lakes without requiring a separate water system.
 
-Each plateau is a flat zone where the profile holds constant across a range of shaping field values. The gaps between plateaus are steep transitions that create cliff-like terrain features.
+Each plateau is a flat zone where the profile holds constant. The gaps between plateaus are transition slopes of varying steepness.
 
 This octave is sampled at the **raw world position** (not domain-warped).
 

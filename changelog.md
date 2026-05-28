@@ -2,32 +2,25 @@
 
 ## **28/05/2026 — Height Profile: Plateau/Terrace Elevation System**
 
-**Change:** Replaced the continent octave (±40m wobble) with a proper height profile that creates 5 elevation tiers separated by narrow cliff bands. The terrain no longer starts from a flat base level (0) — it now has intentional large-scale elevation structure.
+**The problem:** The terrain was generated on a flat base plane — everything started from height 0 and noise was stacked on top. This made the world feel like an endless rumpled blanket: no elevation hierarchy, no levels, just smooth bumps everywhere regardless of where you were. Flying at 200m felt the same as flying at 500m because the terrain underneath was just "more noise." Biome colouring tried to add variety, but colour is just paint — the shape underneath was still flat.
 
-**How it works:**
+**The fix:** Replace the continent octave (a ±40m noise wobble that was too weak to create any real structure) with a height profile — a staircase function applied to a broad noise field that carves the terrain into 5 distinct elevation tiers:
 
-1. A broad shaping noise field (scale 0.0003, period ~20k units) is sampled at each point.
-2. This value is passed through a staircase function that maps it to one of 5 elevation levels, with steep transitions between them:
+| Shaping field | Elevation tier | Transition style |
+|---|---|---|
+| < −0.7 | 0m lowlands (rare — ~7–10% of land) | — |
+| −0.4 to −0.1 | 80m mid plateau | Gentle roll, width 0.3 |
+| 0.1 to 0.3 | 200m upper plateau | Moderate, width 0.2 |
+| 0.4 to 0.6 | 400m high plateau | Sharp cliff, width 0.1 |
+| > 0.7 | 600m platform | Sharp cliff, width 0.1 |
 
-   | Shaping field range | Elevation tier |
-   |---|---|
-   | < −0.5 | 0m (lowlands) |
-   | −0.35 to −0.1 | 80m plateau |
-   | 0.05 to 0.3 | 200m plateau |
-   | 0.45 to 0.7 | 400m high plateau |
-   | > 0.85 | 600m elevated platform |
+**Why the varying transition widths:** A sharp 50m cliff in the middle of a grassland looks like a bug, not a feature — terrain doesn't do that naturally at small scales. So the lower transitions (0→80m, 80→200m) are spread over wider noise ranges (0.3, 0.2), producing gentle rolling ascents between lowland and midland plateaus. The upper transitions (200→400m, 400→600m) are narrow (0.1) — these sit at mountain-belt edges where steep escarpments look correct and dramatic.
 
-   The gaps between these ranges are **cliff zones** — `smoothstep` transitions over a 0.15-wide noise range, producing steep escarpments.
+**Why the 0m lowland tier is rare:** It's the bottom ~15% of the noise field, which in practice means ~7–10% of actual land area. These infrequent basins are the natural place for bodies of water — a separate lake system can slot in later without needing oceans.
 
-3. The profile replaces `continent` in the height stack:
-   ```
-   preDetailHeight = heightProfile + base + hill + mountain
-   ```
-   (The `continent` noise is still computed for the mountain mask.)
+**What else changed:** The mountain mask second condition switched from `smoothstep(-10, 20, continent)` (checking against a weak ±40m noise signal) to `smoothstep(50, 200, profile)` (checking actual base elevation). Mountains now only grow on terrain that's already elevated by the profile, which is exactly what you'd expect — no more lone mountain peaks rising out of perfectly flat lowlands.
 
-4. Mountain mask second condition changed from `smoothstep(-10, 20, continent)` to `smoothstep(50, 200, profile)` — mountains now gate on the actual base elevation rather than an unrelated noise value.
-
-**Also fixed:** The JS path (`terrain.js`) still used the old mountain mask thresholds (`smoothstep(0.1, 0.4, mountainRegion)` × `smoothstep(0, 25, continent)`) while the GLSL path used the updated thresholds (`smoothstep(-0.2, 0.3, mountainRegion)` × `smoothstep(-10, 20, continent)`). Now both use the same values: `smoothstep(-0.2, 0.3, mountainRegion)` × `smoothstep(50, 200, profile)`.
+**Bug fix discovered along the way:** The JS path (`terrain.js`) was still using the old original mountain mask thresholds (`smoothstep(0.1, 0.4, mountainRegion)` × `smoothstep(0, 25, continent)`) while the GLSL path had been updated to the agent-rewritten thresholds (`smoothstep(-0.2, 0.3, mountainRegion)` × `smoothstep(-10, 20, continent)`). CPU and GPU disagreed on where mountains should be. Both now use identical values.
 
 **Files:** `world.js` (computeHeight), `terrain.js` (generateTile).
 
