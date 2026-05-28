@@ -48,7 +48,17 @@ float ridgedNoise(vec2 p) {
 
 float computeHeight(float wx, float wz, float baseScale, float hillScale, float mountainScale, float heightScale, float flatnessFactor, float hillHeightMultiplier, float mountainHeightMultiplier, float continentScale, float warpScale, float ridgeScale) {
     vec2 pos = vec2(wx, wz);
-    float continent = snoise(pos * continentScale) * heightScale * 2.0;
+
+    // Height profile — broad shaping field passed through a staircase function
+    // Creates 5 elevation tiers (0, 80, 200, 400, 600m) with narrow cliff transitions
+    float pf = snoise(pos * 0.0003);
+    float profile = 0.0;
+    float t;
+    t = smoothstep(-0.5, -0.35, pf); profile = mix(0.0, 80.0, t);
+    t = smoothstep(-0.1, 0.05, pf);  profile = mix(profile, 200.0, t);
+    t = smoothstep(0.3, 0.45, pf);   profile = mix(profile, 400.0, t);
+    t = smoothstep(0.7, 0.85, pf);   profile = mix(profile, 600.0, t);
+
     float warpX = snoise(pos * warpScale) * 100.0;
     float warpZ = snoise(pos * warpScale + vec2(5.2, 1.3)) * 100.0;
     vec2 warpPos = pos + vec2(warpX, warpZ);
@@ -57,7 +67,8 @@ float computeHeight(float wx, float wz, float baseScale, float hillScale, float 
     float hill = snoise(warpPos * hillScale) * heightScale * hillHeightMultiplier;
 
     float mountainRegion = snoise(pos * 0.0005);
-    float mountainMask = smoothstep(-0.2, 0.3, mountainRegion) * smoothstep(-10.0, 20.0, continent);
+    float continentCheck = snoise(pos * continentScale) * heightScale * 2.0;
+    float mountainMask = smoothstep(-0.2, 0.3, mountainRegion) * smoothstep(50.0, 200.0, profile);
 
     float rawMountain = max(0.0, snoise(warpPos * 0.0003));
     float mountainBase = rawMountain * rawMountain * 800.0 * mountainMask;
@@ -77,7 +88,7 @@ float computeHeight(float wx, float wz, float baseScale, float hillScale, float 
     float mountainDetail = rockyDetail * smoothstep(10.0, 200.0, mountainBase) + peakJaggedness * peakMask;
     float mountain = mountainBase + mountainDetail;
 
-    float preDetail = continent + base + hill + mountain;
+    float preDetail = profile + base + hill + mountain;
     float elevationFactor = clamp(preDetail / (heightScale * 6.0), 0.0, 1.0);
     float detail = snoise(warpPos * 0.3) * 1.0 * elevationFactor;
     return preDetail + detail;

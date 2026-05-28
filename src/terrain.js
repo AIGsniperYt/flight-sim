@@ -100,7 +100,15 @@ function generateTile(tileX, tileZ) {
         for (let x = 0; x < TILE_SIZE; x++) {
             const wx = x + originX;
             const wz = z + originZ;
-            const continent = snoise2D(wx * continentScale, wz * continentScale) * heightScale * 2.0;
+
+            const pf = snoise2D(wx * 0.0003, wz * 0.0003);
+            let profile = 0.0;
+            let t;
+            t = smoothstep(-0.5, -0.35, pf); profile += (80.0 - profile) * t;
+            t = smoothstep(-0.1, 0.05, pf);  profile += (200.0 - profile) * t;
+            t = smoothstep(0.3, 0.45, pf);   profile += (400.0 - profile) * t;
+            t = smoothstep(0.7, 0.85, pf);   profile += (600.0 - profile) * t;
+
             const warpX = snoise2D(wx * warpScale, wz * warpScale) * 100.0;
             const warpZ = snoise2D(wx * warpScale + 5.2, wz * warpScale + 1.3) * 100.0;
             const wwx = wx + warpX;
@@ -110,7 +118,7 @@ function generateTile(tileX, tileZ) {
             const hill = snoise2D(wwx * hillScale, wwz * hillScale) * heightScale * hillHeightMultiplier;
 
             const mountainRegion = snoise2D(wx * 0.0005, wz * 0.0005);
-            const mountainMask = smoothstep(0.1, 0.4, mountainRegion) * smoothstep(0.0, 25.0, continent);
+            const mountainMask = smoothstep(-0.2, 0.3, mountainRegion) * smoothstep(50.0, 200.0, profile);
 
             const rawMountain = Math.max(0, snoise2D(wwx * 0.0003, wwz * 0.0003));
             const mountainBase = rawMountain * rawMountain * 800.0 * mountainMask;
@@ -130,7 +138,7 @@ function generateTile(tileX, tileZ) {
             const mountainDetail = rockyDetail * smoothstep(10.0, 200.0, mountainBase) + peakJaggedness * peakMask;
             const mountain = mountainBase + mountainDetail;
 
-            const preDetail = continent + base + hill + mountain;
+            const preDetail = profile + base + hill + mountain;
             const elevationFactor = Math.max(0, Math.min(1, preDetail / (heightScale * 6.0)));
             const detail = snoise2D(wwx * 0.3, wwz * 0.3) * 1.0 * elevationFactor;
             data[i++] = preDetail + detail;

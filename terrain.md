@@ -13,21 +13,35 @@ Both paths use the same Gustavson `snoise2D` implementation ported to GLSL and J
 Height is the sum of 10+ layered noise samples built in three structural stages:
 
 ```
-preDetailHeight = continent + base + hill + mountain
+preDetailHeight = heightProfile + base + hill + mountain
 height = preDetailHeight + (detail * elevationFactor)
 ```
 
-### 1. Continent (scale=0.0005, amplitude=±40m)
+### 1. Height Profile — Terrace/Plateau Elevation System
+
+The terrain skeleton is a staircase function applied to a broad noise field, creating distinct elevation tiers separated by narrow cliff bands.
 
 ```
-snoise(wx * 0.0005, wz * 0.0005) * 40.0
+pf = snoise(wx * 0.0003, wz * 0.0003)   // shaping field, range [-1, 1]
+profile = staircase(pf)                   // mapped to 0/80/200/400/600m tiers
 ```
 
-- Period: ~12500 world units (one full noise cycle)
-- Range: -40m to +40m
-- Purpose: Creates broad basin-and-range structure so the world has distinct highlands and lowlands instead of being uniformly bumpy everywhere
+Where `staircase` is:
 
-This octave is sampled at the **raw world position** (not domain-warped), because warping at this scale would wash out the large-scale structure.
+```
+t = smoothstep(-0.5, -0.35, pf); profile = mix(0, 80, t)     // lowlands → 80m plateau
+t = smoothstep(-0.1, 0.05, pf);  profile = mix(80, 200, t)   // 80m → 200m plateau
+t = smoothstep(0.3, 0.45, pf);   profile = mix(200, 400, t)  // 200m → 400m plateau
+t = smoothstep(0.7, 0.85, pf);   profile = mix(400, 600, t)  // 400m → 600m platform
+```
+
+- Period: ~20944 world units (one full noise cycle of the shaping field)
+- Range: 0m to 600m (five discrete tiers)
+- Purpose: Creates broad plateaus at 0, 80, 200, 400, and 600m with steep escarpments between them. The `smoothstep` transitions are only 0.15 wide in noise space — narrow enough to produce visible cliff bands, wide enough to avoid jagged edges.
+
+Each plateau is a flat zone where the profile holds constant across a range of shaping field values. The gaps between plateaus are steep transitions that create cliff-like terrain features.
+
+This octave is sampled at the **raw world position** (not domain-warped).
 
 ### 2. Base (scale=0.02, amplitude=±4m)
 
@@ -106,11 +120,11 @@ Instead of a single continent-based mask, mountains are gated by two multiplied 
 
 ```
 mountainRegion = snoise(rawPos * 0.0005)
-mountainMask = smoothstep(-0.2, 0.3, mountainRegion) × smoothstep(-10.0, 20.0, continent)
+mountainMask = smoothstep(-0.2, 0.3, mountainRegion) × smoothstep(50.0, 200.0, profile)
 ```
 
-- `mountainRegion` is a second continent-scale noise field (period ~12500 units) that determines *where* mountain ranges form. Values above −0.2 start activating the mask, reaching full activation at 0.3 (roughly top 40% of terrain).
-- `smoothstep(-10.0, 20.0, continent)` ensures mountains prefer elevated terrain but don't require it strictly.
+- `mountainRegion` is a continent-scale noise field (period ~12500 units) that determines *where* mountain ranges form. Values above −0.2 start activating the mask, reaching full activation at 0.3 (roughly top 40% of terrain).
+- `smoothstep(50.0, 200.0, profile)` ensures mountains only form where the height profile has already raised the base elevation to at least 50m (ramping to full at 200m). This ties mountain placement directly to the elevation tiers — lowlands at 0m never get mountains; 80m plateaus get partial; 200m+ plateaus get full.
 
 This dual mask creates discrete, isolated mountain belts — not a smooth gradient from plains to peaks. Mountains pop up as distinct ranges separated by wide, flat valleys.
 
@@ -164,9 +178,9 @@ With domain warp, each point's effective sampling position is smoothly shifted b
 
 The warp itself is smooth (at scale 0.002, period ~3141 units), so adjacent points shift gradually — the terrain doesn't tear or pinch.
 
-### Why continent is not warped
+### What is not warped
 
-The continent octave is sampled at raw world position because warping at 0.0005 scale would require an impractically large warp magnitude to have any visible effect at that scale. The continent provides the unfiltered large-scale skeleton; everything else is draped onto it through the warp.
+The height profile and moisture fields are sampled at raw world position — no domain warp. The profile uses a broad 0.0003 scale where warping would need ±300m+ magnitudes to have visible effect. Moisture (0.002 scale) is kept stable so climate zones don't shift as the camera moves.
 
 ---
 
@@ -279,8 +293,9 @@ The fog colour matches the sky (sky blue `#87ceeb`), so distant terrain visually
 | `mountainScale` | 0.003 | both | Not currently used in computeHeight |
 | `mountainHeightMultiplier` | 4.0 | both | Not currently used in computeHeight |
 | `ridgeScale` | 0.001 | both | Present as uniform but unused in computeHeight |
-| `continentScale` | 0.0005 | both | Frequency of continent basin |
+| `continentScale` | 0.0005 | both | Frequency of continent field (mountain mask only) |
 | `warpScale` | 0.002 | both | Frequency of domain warp field |
+| `profileScale` | 0.0003 (hardcoded) | both | Frequency of height profile shaping field |
 | `moistureScale` | 0.002 | both | Frequency of moisture/climate field |
 | `flatnessFactor` | 0.2 | both | How flat the base terrain is |
 | `hillHeightMultiplier` | 0.1 | both | How pronounced hills are |

@@ -1,5 +1,38 @@
 # Changelog
 
+## **28/05/2026 — Height Profile: Plateau/Terrace Elevation System**
+
+**Change:** Replaced the continent octave (±40m wobble) with a proper height profile that creates 5 elevation tiers separated by narrow cliff bands. The terrain no longer starts from a flat base level (0) — it now has intentional large-scale elevation structure.
+
+**How it works:**
+
+1. A broad shaping noise field (scale 0.0003, period ~20k units) is sampled at each point.
+2. This value is passed through a staircase function that maps it to one of 5 elevation levels, with steep transitions between them:
+
+   | Shaping field range | Elevation tier |
+   |---|---|
+   | < −0.5 | 0m (lowlands) |
+   | −0.35 to −0.1 | 80m plateau |
+   | 0.05 to 0.3 | 200m plateau |
+   | 0.45 to 0.7 | 400m high plateau |
+   | > 0.85 | 600m elevated platform |
+
+   The gaps between these ranges are **cliff zones** — `smoothstep` transitions over a 0.15-wide noise range, producing steep escarpments.
+
+3. The profile replaces `continent` in the height stack:
+   ```
+   preDetailHeight = heightProfile + base + hill + mountain
+   ```
+   (The `continent` noise is still computed for the mountain mask.)
+
+4. Mountain mask second condition changed from `smoothstep(-10, 20, continent)` to `smoothstep(50, 200, profile)` — mountains now gate on the actual base elevation rather than an unrelated noise value.
+
+**Also fixed:** The JS path (`terrain.js`) still used the old mountain mask thresholds (`smoothstep(0.1, 0.4, mountainRegion)` × `smoothstep(0, 25, continent)`) while the GLSL path used the updated thresholds (`smoothstep(-0.2, 0.3, mountainRegion)` × `smoothstep(-10, 20, continent)`). Now both use the same values: `smoothstep(-0.2, 0.3, mountainRegion)` × `smoothstep(50, 200, profile)`.
+
+**Files:** `world.js` (computeHeight), `terrain.js` (generateTile).
+
+---
+
 ## **28/05/2026 — Fix: Frustum Culling Bottom-Edge Clipping**
 
 **Change:** Fixed over-aggressive frustum culling at the bottom of the screen when flying over mountains.
