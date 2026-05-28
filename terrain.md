@@ -283,6 +283,16 @@ All LODs feed the same `computeHeight()` function — the only difference is how
 
 ---
 
+## Water
+
+Water fills the 0m lowland basins — the rare ~7–10% of terrain where the height profile is at the lowest tier.
+
+A `waterLevel` of 5m is checked in the fragment shader: any pixel whose height is below 5m renders as lake blue `#004073`. The 0m lowland basins have actual heights ranging from roughly −7m to +7m (from base + hill + detail noise), so most of each basin is submerged with occasional slightly higher points forming small islands.
+
+The water is purely a fragment-shader colour replacement — no physics, no reflections, no transparency. The plane flies through it. The geometry beneath the water surface still exists (you can see it if you fly under the terrain). A proper water system with waves, reflections, and collision is future work.
+
+---
+
 ## Fog
 
 ```

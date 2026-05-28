@@ -264,6 +264,10 @@ export function getTerrainColorAt(worldX, worldZ) {
     col = mixColors(col, highCol, t2);
     col = mixColors(col, snow, t3);
 
+    if (h < 8.0) {
+        col = { r: 0.0, g: 0.25, b: 0.45 };
+    }
+
     return {
         r: Math.round(col.r * 255),
         g: Math.round(col.g * 255),

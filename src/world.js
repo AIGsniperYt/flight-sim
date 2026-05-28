@@ -376,6 +376,14 @@ function initMeshes(scene) {
                 col = mix(col, highCol, t2);
                 col = mix(col, snow, t3);
                 col = mix(col, rock, rockMix);
+
+                // Water: fill the 0m lowland basins
+                // These were designed as future lake beds — rare, expansive depressions
+                float waterLevel = 8.0;
+                if (h < waterLevel) {
+                    col = vec3(0.0, 0.25, 0.45);
+                }
+
                 diffuseColor.rgb = col;
                 `
             );

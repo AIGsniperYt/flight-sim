@@ -1,5 +1,19 @@
 # Changelog
 
+## **28/05/2026 — Water: Lakes in the 0m Lowland Basins**
+
+**What changed:** The rare 0m lowland basins (~7–10% of terrain) now fill with water. A `waterLevel` is checked in the fragment shader — any terrain below this renders as lake blue.
+
+- Initially set to 5m, but the base+hill+detail noise pushed scattered land above the surface, creating a boggy look. Raised to **8m** — the noise rarely reaches +8m across all three octaves simultaneously (~1% chance), so basins are consistently submerged with only the most extreme peaks poking out as rare islands.
+- These lakes are naturally expansive because the 0m lowland tier was designed to be geographically coherent — each basin is a distinct region, not scattered puddles.
+- The water is purely a visual fragment-shader effect for now (no physics, no reflections, no transparency). The plane flies straight through it.
+
+This is a temporary placeholder addition because I got bored and didn't know what to do next
+
+**Files:** `world.js` (fragment shader), `terrain.js` (getTerrainColorAt).
+
+---
+
 ## **28/05/2026 — Biome Terrain Modifiers: Dunes, Tundra, and Expansive Regions**
 
 **What changed:** Biomes now shape the ground itself, not just colour the surface. Three additions:
