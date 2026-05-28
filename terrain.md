@@ -29,17 +29,16 @@ profile = staircase(pf)                   // mapped to 0/80/200/400/600m tiers
 Where `staircase` is:
 
 ```
-t = smoothstep(-0.7, -0.4, pf);  profile = mix(0, 80, t)    // 0m lowland → 80m plateau (gentle, width 0.3)
+t = smoothstep(-0.7, -0.4, pf);  profile = mix(0, 80, t)    // 0m → 80m plateau  (gentle, width 0.3)
 t = smoothstep(-0.1, 0.1, pf);   profile = mix(80, 200, t)  // 80m → 200m plateau (moderate, width 0.2)
-t = smoothstep(0.3, 0.4, pf);    profile = mix(200, 400, t) // 200m → 400m high plateau (sharp, width 0.1)
-t = smoothstep(0.6, 0.7, pf);    profile = mix(400, 600, t) // 400m → 600m platform (sharp, width 0.1)
+t = smoothstep(0.35, 0.5, pf);   profile = mix(200, 400, t) // 200m → 400m plateau (soft, width 0.15)
+t = smoothstep(0.65, 0.7, pf);   profile = mix(400, 600, t) // 400m → 600m platform (dramatic, width 0.05)
 ```
 
 - Period: ~20944 world units (one full noise cycle of the shaping field)
 - Range: 0m to 600m (five discrete tiers)
 - Purpose: Creates broad plateaus at 0, 80, 200, 400, and 600m with transitions between them.
-- Lower transitions (0→80m, 80→200m) use wider noise ranges (0.3, 0.2) — these produce gentle rolling ascents between lowland and midland plateaus. A sharp cliff in the middle of a grassland looks unnatural, so these are kept gradual.
-- Upper transitions (200→400m, 400→600m) use narrow noise ranges (0.1) — these are mountain-belt edges where steep escarpments look correct and dramatic.
+- Transition widths decrease **exponentially** with height: 0.3 → 0.2 → 0.15 → 0.05. This matches real mountain formation — lower slopes weather into gentle hills, while only the highest tier retains the raw sharpness of tectonic uplift. A sharp cliff in the middle of a grassland looks unnatural, so those lower transitions are kept gradual.
 - The 0m lowland tier is deliberately rare (only terrain below −0.7 in noise space, ~7–10% of land area). This creates infrequent basins that can logically hold lakes without requiring a separate water system.
 
 Each plateau is a flat zone where the profile holds constant. The gaps between plateaus are transition slopes of varying steepness.

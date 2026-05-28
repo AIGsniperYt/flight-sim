@@ -9,12 +9,12 @@
 | Shaping field | Elevation tier | Transition style |
 |---|---|---|
 | < −0.7 | 0m lowlands (rare — ~7–10% of land) | — |
-| −0.4 to −0.1 | 80m mid plateau | Gentle roll, width 0.3 |
-| 0.1 to 0.3 | 200m upper plateau | Moderate, width 0.2 |
-| 0.4 to 0.6 | 400m high plateau | Sharp cliff, width 0.1 |
-| > 0.7 | 600m platform | Sharp cliff, width 0.1 |
+| −0.4 to −0.1 | 80m mid plateau | Gentle, width 0.3 |
+| 0.1 to 0.35 | 200m upper plateau | Moderate, width 0.2 |
+| 0.5 to 0.65 | 400m high plateau | Soft, width 0.15 |
+| > 0.7 | 600m platform | Dramatic, width 0.05 |
 
-**Why the varying transition widths:** A sharp 50m cliff in the middle of a grassland looks like a bug, not a feature — terrain doesn't do that naturally at small scales. So the lower transitions (0→80m, 80→200m) are spread over wider noise ranges (0.3, 0.2), producing gentle rolling ascents between lowland and midland plateaus. The upper transitions (200→400m, 400→600m) are narrow (0.1) — these sit at mountain-belt edges where steep escarpments look correct and dramatic.
+**Why exponential transition widths:** Transition widths decrease with height (0.3 → 0.2 → 0.15 → 0.05) because that's how real terrain works — lower slopes weather into gentle rolling hills, while only the highest tier retains the raw sharpness of tectonic uplift. A sharp 50m cliff in the middle of a grassland looks like a bug, not a feature; at 600m it looks like a mountain escarpment. The 200→400m tier was also slightly too sharp for the grass bands, so it was widened from 0.1 to 0.15.
 
 **Why the 0m lowland tier is rare:** It's the bottom ~15% of the noise field, which in practice means ~7–10% of actual land area. These infrequent basins are the natural place for bodies of water — a separate lake system can slot in later without needing oceans.
 

@@ -106,8 +106,8 @@ function generateTile(tileX, tileZ) {
             let t;
             t = smoothstep(-0.7, -0.4, pf); profile += (80.0 - profile) * t;
             t = smoothstep(-0.1, 0.1, pf);  profile += (200.0 - profile) * t;
-            t = smoothstep(0.3, 0.4, pf);   profile += (400.0 - profile) * t;
-            t = smoothstep(0.6, 0.7, pf);   profile += (600.0 - profile) * t;
+            t = smoothstep(0.35, 0.5, pf);  profile += (400.0 - profile) * t;
+            t = smoothstep(0.65, 0.7, pf);  profile += (600.0 - profile) * t;
 
             const warpX = snoise2D(wx * warpScale, wz * warpScale) * 100.0;
             const warpZ = snoise2D(wx * warpScale + 5.2, wz * warpScale + 1.3) * 100.0;
