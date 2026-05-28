@@ -10,11 +10,12 @@ Both paths use the same Gustavson `snoise2D` implementation ported to GLSL and J
 
 ## Noise Octaves
 
-Height is the sum of 10+ layered noise samples built in three structural stages:
+Height is the sum of 10+ layered noise samples plus biome-specific modifiers:
 
 ```
 preDetailHeight = heightProfile + base + hill + mountain
-height = preDetailHeight + (detail * elevationFactor)
+biomeHeight = desertDunes + tundraRuggedness   // gated by biome field
+height = preDetailHeight + (detail * elevationFactor) + biomeHeight
 ```
 
 ### 1. Height Profile — Terrace/Plateau Elevation System
@@ -235,20 +236,34 @@ A continent-scale noise field (scale=0.002, remapped to [0,1]) determines climat
 
 ### Biome Matrix
 
-| Elevation | Dry (moisture→0) | → | Wet (moisture→1) |
-|---|---|---|---|---|
-| Low (0–80m) | Dry grassland `#9a9a5a` | → | Rainforest green `#2d6b1e` |
-| Mid (80–300m) | Olive shrubland `#7a8032` | → | Temperate forest `#3a7d34` |
-| High (300–500m) | Tundra `#8a9a8a` | — | Tundra (fixed) |
-| 500m+ | Snow `#f0f0f0` | — | Snow |
+A second large-scale noise field (`biomeField`, scale=0.0001, period ~20000 units) controls which colour palette the low-elevation band uses. A single biome fills most of the visible horizon (5000 units) — you fly into a biome and stay in it, rather than seeing multiple biomes on screen at once. This is separate from the moisture field — biomes shape the ground and its colour, moisture provides fine-grained vegetation variation within each biome.
 
-Blending uses `smoothstep` between bands and `mix` across moisture. Low and mid bands each use a straight 2-way blend between their dry and wet endpoints.
+| Biome field value | Biome | Low-elevation palette |
+|---|---|---|
+| < −0.2 (dry biome) | Desert/savanna | Sand `#d4b483` → Savanna gold `#b8a84a` (by moisture) |
+| −0.1 to 0.1 | Grassland | Dry grass `#9a9a5a` → Rainforest `#2d6b1e` |
+| > 0.2 (wet biome) | Rainforest | Shrubland olive `#7a8032` → Rainforest `#2d6b1e` |
+
+The mid band (80–300m) uses a fixed shrubland↔forest blend regardless of biome field. The high band (300m+) is always tundra. This means desert dunes (which only form at low elevation via the terrain modifier) are correctly coloured sandy, while adjacent high ground gets shrubland/forest colours — biomes are elevation-aware.
+
+Blending: The low band uses a **3-way weighted sum** of the three palettes, with `smoothstep` transitions at biome field values −0.4/−0.1 and 0.1/0.4. Within each palette, `mix` provides moisture-driven variation (sand→savanna, dry grass→rainforest, shrubland→rainforest).
+
+**Exception:** The 0m lowland tier (future lake beds) always uses the grassland palette regardless of biome field. A `smoothstep(10, 30, profile)` blend transitions from forced grassland at the very bottom to the biome-driven palette above 30m. This prevents random sand patches in lowland basins.
 
 ### Slope Override
 
 World position is passed as a varying from vertex → fragment shader. The fragment shader computes the face normal via `dFdx(vWorldPos) × dFdy(vWorldPos)`. Slopes above 30° blend toward rock colour `#6b6b6b`, reaching full rock at 50°. This prevents "grass on vertical cliff faces" and makes steep terrain look like bare rock.
 
-The CPU/minimap path (`getTerrainColorAt`) uses the same moisture + elevation logic but omits slope detection (no height derivatives available without extra noise samples).
+The CPU/minimap path (`getTerrainColorAt`) uses the same biome-field + moisture + elevation logic but omits slope detection (no height derivatives available without extra noise samples).
+
+### Biome Terrain Modifiers
+
+The biome field also changes the actual terrain shape, not just its colour:
+
+- **Desert dunes** — In low-elevation dry regions (`desertMix`), three octaves of `abs(snoise)` produce asymmetric wind-blown dune shapes: broad swell at 0.003 (±20m), primary dune ridges at 0.006 (±25m), and secondary ripples at 0.012 (±10m). The mountain mask is reduced by 80% in deserts — flat sand seas shouldn't have peaks rising out of them.
+- **Tundra ruggedness** — Above 300m elevation, two octaves of extra ridged noise (0.005 × 40m, 0.012 × 15m) carve sharp alpine rock ridges. This makes highland areas feel genuinely mountainous rather than just "snow on the same green terrain."
+- **Rainforest extra detail** — Rainforest lowlands keep the current base+hill terrain without modification; the dense vegetation is represented through colour alone.
+- **Mid band and above** — Unchanged from the base terrain system; the biome field only modifies terrain shape at low elevation (desert) and high elevation (tundra).
 
 ---
 
@@ -299,6 +314,7 @@ The fog colour matches the sky (sky blue `#87ceeb`), so distant terrain visually
 | `continentScale` | 0.0005 | both | Frequency of continent field (mountain mask only) |
 | `warpScale` | 0.002 | both | Frequency of domain warp field |
 | `profileScale` | 0.0003 (hardcoded) | both | Frequency of height profile shaping field |
+| `biomeFieldScale` | 0.0001 (hardcoded) | both | Frequency of large-scale biome region field |
 | `moistureScale` | 0.002 | both | Frequency of moisture/climate field |
 | `flatnessFactor` | 0.2 | both | How flat the base terrain is |
 | `hillHeightMultiplier` | 0.1 | both | How pronounced hills are |

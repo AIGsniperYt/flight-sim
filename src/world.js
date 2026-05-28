@@ -82,6 +82,17 @@ float computeHeight(float wx, float wz, float baseScale, float hillScale, float 
     float continentCheck = snoise(pos * continentScale) * heightScale * 2.0;
     float mountainMask = smoothstep(-0.2, 0.3, mountainRegion) * smoothstep(50.0, 200.0, profile);
 
+    // Large-scale biome field: controls terrain shape modifiers (desert dunes, tundra ruggedness)
+    // Period ~20000 units — takes ~100 seconds to fly across at cruise speed.
+    // A single biome fills most of the visible horizon (5000 units).
+    float biomeField = snoise(pos * 0.0001);
+
+    // Desert: low elevation + dry biome field value
+    // Exclude the 0m lowlands (future lake beds) — no dunes in basins
+    float desertMix = (1.0 - smoothstep(60.0, 150.0, profile)) * (1.0 - smoothstep(-0.2, 0.1, biomeField)) * smoothstep(10.0, 30.0, profile);
+    // Reduce mountains in deserts (flat sand seas shouldn't have peaks)
+    mountainMask *= (1.0 - desertMix * 0.8);
+
     float rawMountain = max(0.0, snoise(warpPos * 0.0003));
     float mountainBase = rawMountain * rawMountain * 800.0 * mountainMask;
 
@@ -103,7 +114,22 @@ float computeHeight(float wx, float wz, float baseScale, float hillScale, float 
     float preDetail = profile + base + hill + mountain;
     float elevationFactor = clamp(preDetail / (heightScale * 6.0), 0.0, 1.0);
     float detail = snoise(warpPos * 0.3) * 1.0 * elevationFactor;
-    return preDetail + detail;
+
+    // --- Biome terrain modifiers ---
+    // Desert dunes: asymmetric abs-noise creates wind-blown dune shapes
+    float duneNoise = 0.0;
+    duneNoise += snoise(warpPos * 0.003) * 20.0;     // broad dune base
+    duneNoise += abs(snoise(warpPos * 0.006)) * 25.0; // primary dune ridges
+    duneNoise += abs(snoise(warpPos * 0.012)) * 10.0; // secondary dune ripples
+
+    // Tundra: extra ridged noise for rugged alpine terrain at high elevation
+    float tundraMix = smoothstep(300.0, 500.0, profile);
+    float tundraNoise = 0.0;
+    tundraNoise += ridgedNoise(warpPos * 0.005) * 40.0;
+    tundraNoise += ridgedNoise(warpPos * 0.012) * 15.0;
+
+    float biomeHeight = duneNoise * desertMix + tundraNoise * tundraMix;
+    return preDetail + detail + biomeHeight;
 }
 `;
 
@@ -277,6 +303,7 @@ function initMeshes(scene) {
                 uniform float moistureScale;
                 varying float vHeight;
                 varying float vMoisture;
+                varying float vBiomeField;
                 varying vec3 vWorldPos;
                 ${shader.vertexShader}
             `;
@@ -289,6 +316,7 @@ function initMeshes(scene) {
                 transformed.y = h;
                 vHeight = h;
                 vMoisture = snoise(vec2(transformed.x, transformed.z) * moistureScale) * 0.5 + 0.5;
+                vBiomeField = snoise(vec2(transformed.x, transformed.z) * 0.0001);
                 vWorldPos = vec3(transformed.x, h, transformed.z);
                 `
             );
@@ -297,6 +325,7 @@ function initMeshes(scene) {
                 uniform float heightScale;
                 varying float vHeight;
                 varying float vMoisture;
+                varying float vBiomeField;
                 varying vec3 vWorldPos;
                 ${shader.fragmentShader}
             `;
@@ -314,6 +343,8 @@ function initMeshes(scene) {
                 float slopeDeg = degrees(acos(clamp(n.y, 0.0, 1.0)));
                 float rockMix = smoothstep(30.0, 50.0, slopeDeg);
 
+                vec3 sand = vec3(0.831, 0.706, 0.514);
+                vec3 savanna = vec3(0.722, 0.659, 0.290);
                 vec3 dryGrass = vec3(0.604, 0.584, 0.353);
                 vec3 rainforest = vec3(0.176, 0.420, 0.118);
                 vec3 shrubland = vec3(0.478, 0.502, 0.196);
@@ -322,7 +353,18 @@ function initMeshes(scene) {
                 vec3 rock = vec3(0.420, 0.420, 0.420);
                 vec3 snow = vec3(0.941, 0.941, 0.961);
 
-                vec3 lowCol = mix(dryGrass, rainforest, moisture);
+                // Biome field selects low-elevation colour palette
+                // The very lowest elevations (0m basins, future lake beds) always use grassland
+                float bf = vBiomeField;
+                float lowlandBlend = smoothstep(10.0, 30.0, h);
+                float desertW = 1.0 - smoothstep(-0.4, -0.1, bf);
+                float rainforestW = smoothstep(0.1, 0.4, bf);
+                float grasslandW = 1.0 - desertW - rainforestW;
+                vec3 desertPalette = mix(sand, savanna, moisture);
+                vec3 grasslandPalette = mix(dryGrass, rainforest, moisture);
+                vec3 rainforestPalette = mix(shrubland, rainforest, moisture);
+                vec3 biomeLowCol = desertPalette * desertW + grasslandPalette * grasslandW + rainforestPalette * rainforestW;
+                vec3 lowCol = mix(grasslandPalette, biomeLowCol, lowlandBlend);
                 vec3 midCol = mix(shrubland, forest, moisture);
                 vec3 highCol = tundra;
 

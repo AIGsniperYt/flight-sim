@@ -125,7 +125,11 @@ function generateTile(tileX, tileZ) {
             const hill = snoise2D(wwx * hillScale, wwz * hillScale) * heightScale * hillHeightMultiplier;
 
             const mountainRegion = snoise2D(wx * 0.0005, wz * 0.0005);
-            const mountainMask = smoothstep(-0.2, 0.3, mountainRegion) * smoothstep(50.0, 200.0, profile);
+            let mountainMask = smoothstep(-0.2, 0.3, mountainRegion) * smoothstep(50.0, 200.0, profile);
+
+            const biomeField = snoise2D(wx * 0.0001, wz * 0.0001);
+            const desertMix = (1.0 - smoothstep(60.0, 150.0, profile)) * (1.0 - smoothstep(-0.2, 0.1, biomeField)) * smoothstep(10.0, 30.0, profile);
+            mountainMask *= (1.0 - desertMix * 0.8);
 
             const rawMountain = Math.max(0, snoise2D(wwx * 0.0003, wwz * 0.0003));
             const mountainBase = rawMountain * rawMountain * 800.0 * mountainMask;
@@ -148,7 +152,19 @@ function generateTile(tileX, tileZ) {
             const preDetail = profile + base + hill + mountain;
             const elevationFactor = Math.max(0, Math.min(1, preDetail / (heightScale * 6.0)));
             const detail = snoise2D(wwx * 0.3, wwz * 0.3) * 1.0 * elevationFactor;
-            data[i++] = preDetail + detail;
+
+            let duneNoise = 0;
+            duneNoise += snoise2D(wwx * 0.003, wwz * 0.003) * 20.0;
+            duneNoise += Math.abs(snoise2D(wwx * 0.006, wwz * 0.006)) * 25.0;
+            duneNoise += Math.abs(snoise2D(wwx * 0.012, wwz * 0.012)) * 10.0;
+
+            const tundraMix = smoothstep(300.0, 500.0, profile);
+            let tundraNoise = 0;
+            tundraNoise += ridgedNoise(wwx * 0.005, wwz * 0.005) * 40.0;
+            tundraNoise += ridgedNoise(wwx * 0.012, wwz * 0.012) * 15.0;
+
+            const biomeHeight = duneNoise * desertMix + tundraNoise * tundraMix;
+            data[i++] = preDetail + detail + biomeHeight;
         }
     }
     return data;
@@ -199,7 +215,10 @@ export function getTerrainColorAt(worldX, worldZ) {
     const h = getHeight(worldX, worldZ);
     const moisture = snoise2D(worldX * 0.002, worldZ * 0.002) * 0.5 + 0.5;
     const m = Math.max(0, Math.min(1, moisture));
+    const bf = snoise2D(worldX * 0.0001, worldZ * 0.0001);
 
+    const sand = { r: 0.831, g: 0.706, b: 0.514 };
+    const savanna = { r: 0.722, g: 0.659, b: 0.290 };
     const dryGrass = { r: 0.604, g: 0.584, b: 0.353 };
     const rainforest = { r: 0.176, g: 0.420, b: 0.118 };
     const shrubland = { r: 0.478, g: 0.502, b: 0.196 };
@@ -219,7 +238,21 @@ export function getTerrainColorAt(worldX, worldZ) {
         b: c1.b + (c2.b - c1.b) * t
     });
 
-    const lowCol = mixColors(dryGrass, rainforest, m);
+    const addWeighted = (c1, w1, c2, w2, c3, w3) => ({
+        r: c1.r * w1 + c2.r * w2 + c3.r * w3,
+        g: c1.g * w1 + c2.g * w2 + c3.g * w3,
+        b: c1.b * w1 + c2.b * w2 + c3.b * w3
+    });
+
+    const lowlandBlend = smoothstepVal(10.0, 30.0, h);
+    const desertW = 1.0 - smoothstepVal(-0.4, -0.1, bf);
+    const rainforestW = smoothstepVal(0.1, 0.4, bf);
+    const grasslandW = 1.0 - desertW - rainforestW;
+    const desertPalette = mixColors(sand, savanna, m);
+    const grasslandPalette = mixColors(dryGrass, rainforest, m);
+    const rainforestPalette = mixColors(shrubland, rainforest, m);
+    const biomeLowCol = addWeighted(desertPalette, desertW, grasslandPalette, grasslandW, rainforestPalette, rainforestW);
+    const lowCol = mixColors(grasslandPalette, biomeLowCol, lowlandBlend);
     const midCol = mixColors(shrubland, forest, m);
     const highCol = tundra;
 

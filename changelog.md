@@ -1,5 +1,23 @@
 # Changelog
 
+## **28/05/2026 — Biome Terrain Modifiers: Dunes, Tundra, and Expansive Regions**
+
+**What changed:** Biomes now shape the ground itself, not just colour the surface. Three additions:
+
+1. **Expansive biome field** — a new noise layer at 0.0001 (period ~20000 units, ~100s flyover time) classifies each point into a biome region. A single biome fills most of the visible horizon (5000 units) — you fly into a biome and stay in it, rather than everything mingling on screen. This was initially 0.0004 (period 5000 units, biomes changing every ~12 seconds) which made desert, forest, and mountains all visible at once. Open expanse was the fix.
+
+2. **Desert dunes** — in low-elevation dry regions, `abs(snoise)` produces asymmetric wind-blown dune shapes. Three octaves (0.003 broad swell, 0.006 primary ridges, 0.012 secondary ripples) stack to create a dune field up to ~55m tall stretching across the desert expanse. Mountain mask is reduced by 80% in deserts — flat sand seas shouldn't have peaks.
+
+3. **Tundra ruggedness** — at elevations above 300m, extra ridged noise (0.005, 0.012) carves rugged alpine terrain with sharp rock ridges. These highland regions now feel massive and alpine, hard to cross, abundant with snow at the peaks.
+
+**Colour system updated:** The low-elevation colour palette is now a 3-way blend driven by the biome field: sandy desert, grassland, and rainforest. Within each palette, moisture still provides fine-grained variation (sand→savanna, dry grass→rainforest, etc.).
+
+**Post-fix: 0m lowland basins no longer show desert patches.** The rare lowland basins (future lake beds) were getting the desert palette where biomeField happened to be dry, creating random sand patches in the grass. Fixed by gating the desert palette and dune terrain modifier below 20m elevation — the 0m tier always uses grassland colour and gets no dunes. Now those basins look like grassy depressions, which is both more natural and ready for a future water system.
+
+**Files:** `world.js` (computeHeight, vertex/fragment shader), `terrain.js` (generateTile, getTerrainColorAt).
+
+---
+
 ## **28/05/2026 — Height Profile Refinement: Exponential Tapering + Sigmoid Transitions**
 
 **What changed:** Two rounds of tuning after flying the initial height profile:
