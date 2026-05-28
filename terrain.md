@@ -106,11 +106,11 @@ Instead of a single continent-based mask, mountains are gated by two multiplied 
 
 ```
 mountainRegion = snoise(rawPos * 0.0005)
-mountainMask = smoothstep(0.1, 0.4, mountainRegion) × smoothstep(0.0, 25.0, continent)
+mountainMask = smoothstep(-0.2, 0.3, mountainRegion) × smoothstep(-10.0, 20.0, continent)
 ```
 
-- `mountainRegion` is a second continent-scale noise field (period ~12500 units) that determines *where* mountain ranges form. Only the top ~15% of this field passes.
-- `smoothstep(0.0, 25.0, continent)` ensures mountains only form where the terrain is already elevated.
+- `mountainRegion` is a second continent-scale noise field (period ~12500 units) that determines *where* mountain ranges form. Values above −0.2 start activating the mask, reaching full activation at 0.3 (roughly top 40% of terrain).
+- `smoothstep(-10.0, 20.0, continent)` ensures mountains prefer elevated terrain but don't require it strictly.
 
 This dual mask creates discrete, isolated mountain belts — not a smooth gradient from plains to peaks. Mountains pop up as distinct ranges separated by wide, flat valleys.
 
@@ -139,7 +139,7 @@ Domain warping is the technique of feeding noise-shifted coordinates into the no
 
 ```
 rawWarpX = snoise(wx * 0.002, wz * 0.002)         // range: [-1, 1]
-rawWarpZ = snoise(wx * 0.002 + 100, wz * 0.002 + 100) // different noise, same frequency
+rawWarpZ = snoise(wx * 0.002 + 5.2, wz * 0.002 + 1.3) // different noise seed, same frequency
 
 warpX = rawWarpX * 100.0   // shift up to ±100m
 warpZ = rawWarpZ * 100.0   // shift up to ±100m
@@ -187,16 +187,51 @@ When modifying the noise stack, both files must be updated identically. A mismat
 
 ## Surface Colouring
 
-The fragment shader colours each fragment based on its height using four smooth colour bands, rescaled for the new 800m+ mountain altitudes:
+Terrain colour is a 2D biome system driven by **elevation**, **moisture**, and **slope**, not just elevation alone.
 
-| Height | Colour | Represents |
-|---|---|---|
-| 0–80m | Deep Green (0.25, 0.48, 0.20) | Lush valley grass |
-| 80–150m | Brown (0.42, 0.32, 0.20) | Hillside dirt |
-| 150–300m | Slate Grey (0.45, 0.45, 0.48) | Mountain rock |
-| 500–650m | White (0.95, 0.95, 0.98) | Alpine snow |
+### How it works (walkthrough)
 
-Blending uses `smoothstep` + `mix` — the first transition (grass→dirt) spans 80–150m, the second (dirt→rock) spans 150–300m, and the third (rock→snow) spans 500–650m. The 200m snow-free gap between rock and snow ensures that many mountains remain rocky-topped instead of being capped in white automatically.
+The biome colour for each fragment is computed in five steps:
+
+1. **Moisture** — In the vertex shader, every vertex samples `snoise(rawPos × 0.002)` (same Gustavson noise as the height stack, just at its own frequency) and remaps from `[-1, 1]` to `[0, 1]`. This produces continent-scale climate zones with a period of ~3141 units. Sampled at raw world position (no domain warp) so zones are stable and don't wobble as the camera moves.
+
+2. **Slope** — The fragment shader uses `dFdx(vWorldPos) × dFdy(vWorldPos)` to derive the face normal from screen-space derivatives. `n.y` gives the slope (dot with vertical). Converted to degrees, then `smoothstep(30°, 50°)` produces a `rockMix` factor: 0 on flat ground, 1 on cliffs.
+
+3. **Elevation bands** — Three `smoothstep` transitions climb the height profile:
+   - `t1`: low→mid at 80–150m
+   - `t2`: mid→high at 300–500m
+   - `t3`: high→snow at 500–650m
+
+4. **Per-band colour** — Each elevation band computes its own moisture-driven blend:
+   - **Low band (0–80m):** `mix(dryGrass, rainforest, moisture)` — dry end is tan-green `#9a9a5a`, wet end is dark green `#2d6b1e`
+   - **Mid band (80–300m):** `mix(shrubland, forest, moisture)` — dry end is olive `#7a8032`, wet end is forest green `#3a7d34`
+   - **High band (300–500m):** fixed tundra `#8a9a8a` — moisture doesn't matter at this elevation
+   - **500m+:** snow `#f0f0f0`
+
+5. **Layer together** — The bands are blended in sequence: `mix(lowCol, midCol, t1)` → `mix(that, highCol, t2)` → `mix(that, snow, t3)` → `mix(that, rock, rockMix)`.
+
+The final colour is: **elevation picks the band, moisture picks where within the band, slope overrides to rock on steep faces**.
+
+### Moisture Field
+
+A continent-scale noise field (scale=0.002, remapped to [0,1]) determines climate zones. Sampled at raw world position — no domain warp — so climate regions are stable and geographically coherent. Period: ~3141 units.
+
+### Biome Matrix
+
+| Elevation | Dry (moisture→0) | → | Wet (moisture→1) |
+|---|---|---|---|---|
+| Low (0–80m) | Dry grassland `#9a9a5a` | → | Rainforest green `#2d6b1e` |
+| Mid (80–300m) | Olive shrubland `#7a8032` | → | Temperate forest `#3a7d34` |
+| High (300–500m) | Tundra `#8a9a8a` | — | Tundra (fixed) |
+| 500m+ | Snow `#f0f0f0` | — | Snow |
+
+Blending uses `smoothstep` between bands and `mix` across moisture. Low and mid bands each use a straight 2-way blend between their dry and wet endpoints.
+
+### Slope Override
+
+World position is passed as a varying from vertex → fragment shader. The fragment shader computes the face normal via `dFdx(vWorldPos) × dFdy(vWorldPos)`. Slopes above 30° blend toward rock colour `#6b6b6b`, reaching full rock at 50°. This prevents "grass on vertical cliff faces" and makes steep terrain look like bare rock.
+
+The CPU/minimap path (`getTerrainColorAt`) uses the same moisture + elevation logic but omits slope detection (no height derivatives available without extra noise samples).
 
 ---
 
@@ -246,6 +281,7 @@ The fog colour matches the sky (sky blue `#87ceeb`), so distant terrain visually
 | `ridgeScale` | 0.001 | both | Present as uniform but unused in computeHeight |
 | `continentScale` | 0.0005 | both | Frequency of continent basin |
 | `warpScale` | 0.002 | both | Frequency of domain warp field |
+| `moistureScale` | 0.002 | both | Frequency of moisture/climate field |
 | `flatnessFactor` | 0.2 | both | How flat the base terrain is |
 | `hillHeightMultiplier` | 0.1 | both | How pronounced hills are |
 | `mountainBaseScale` | 0.0003 (hardcoded) | both | Frequency of mountain base dome |

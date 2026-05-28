@@ -1,5 +1,64 @@
 # Changelog
 
+## **28/05/2026 — Fix: Frustum Culling Bottom-Edge Clipping**
+
+**Change:** Fixed over-aggressive frustum culling at the bottom of the screen when flying over mountains.
+
+**Root cause:** The frustum re-evaluation loop (`updateChunks`, line 567) used hardcoded Y bounds of `[-200, 200]` for every chunk's AABB regardless of LOD. Mountains reach 800m+, so directly below the camera at altitude the AABB sat entirely below the view frustum, causing `frustum.intersectsBox()` to return false. The chunk was hidden while still clearly on screen.
+
+**Fix:** Replaced `_frustumBBox` Y bounds with `LOD_HEIGHT_RANGES[entry.lod]` (range.min / range.max). Near/mid chunks now use [−10, 1000] / [−5, 800] — wide enough to always intersect with the frustum when the terrain is visible. Far/ultra/horizon chunks retain their tighter bounds for proper occlusion behind the camera.
+
+**Files:** `world.js` (line 567-568).
+
+---
+
+## **28/05/2026 — Biome System (Moisture × Elevation Colormap)**
+
+**Change:** Replaced the 4-band elevation-only colouring with a 2D biome system that varies terrain colour by moisture and slope:
+
+- **Moisture field:** New `moistureScale` uniform (0.002, period ~3141 units). Single snoise evaluation per vertex, remapped to [0,1]. Climate zones vary within visible range for biome diversity when flying.
+- **6 visual biomes** blending along elevation × moisture axes:
+
+  | Elevation | Dry (moisture→0) | → | Wet (moisture→1) |
+  |---|---|---|---|
+  | Low (0-80m) | Dry grassland → | → | Rainforest green |
+  | Mid (80-300m) | Olive shrubland → | → | Temperate forest |
+  | High (300-500m) | Tundra (fixed) | — | Tundra |
+  | 500m+ | Snow | — | Snow |
+
+- **Slope-aware rock override:** World position passed as varying, slope computed via `dFdx`/`dFdy` cross-product in fragment shader. Slopes >30° blend toward rock colour, over 50° fully rock.
+- **Mountain mask widened:** Changed from `smoothstep(0.1, 0.4, mountainRegion)` to `smoothstep(-0.2, 0.3, mountainRegion)` and continent threshold from `smoothstep(0.0, 25.0, continent)` to `smoothstep(-10.0, 20.0, continent)`. Mountains now cover ~40% of terrain instead of ~10%.
+- **Removed pure desert sand colour** — replaced with dry grassland (warm tan-green `#9a9a5a`) for the extreme dry end. Eliminates the "everything is desert" look at moderate moisture values. Low band now uses 2-way blend instead of 3-way.
+- **CPU path:** Same logic for minimap, minus slope detection.
+
+**Biome walkthrough (how it all fits together):**
+
+The final colour for each fragment is computed in five steps:
+
+1. **Moisture** — Vertex shader samples `snoise(rawPos × 0.002)` (same snoise as the height stack, own frequency), remaps `[-1,1]` → `[0,1]`. No domain warp, so climate zones are stable.
+
+2. **Slope** — Fragment shader derives face normal from `dFdx(vWorldPos) × dFdy(vWorldPos)`. `n.y` gives slope → `smoothstep(30°, 50°)` = `rockMix` (0 on flat, 1 on cliffs).
+
+3. **Elevation bands** — Three `smoothstep` transitions climb the height bands (80m, 300m, 500m thresholds).
+
+4. **Per-band colour** — Low: `mix(dryGrass #9a9a5a, rainforest #2d6b1e, moisture)`. Mid: `mix(shrubland #7a8032, forest #3a7d34, moisture)`. High: fixed tundra `#8a9a8a`.
+
+5. **Layer** — `mix(lowColour, midColour, t1)` → `mix(that, highColour, t2)` → `mix(that, snow, t3)` → `mix(that, rock, rockMix)` where:
+
+   | Factor | `smoothstep` range | What it blends |
+   |---|---|---|
+   | `t1` | 80–150m | lowColour → midColour |
+   | `t2` | 300–500m | mid → highColour |
+   | `t3` | 500–650m | highColour → snow |
+
+**Elevation picks the band, moisture picks where within the band, slope overrides to rock on steep faces.**
+
+**Files:** `world.js` (vertex/fragment shader), `terrain.js` (getTerrainColorAt, getColorComponents).
+
+G-force visuals were annoying, so toggle functionality was added, and they were disabled until I improved the physics engine later in an overhaul.
+
+---
+
 ## **27/05/2026 — G-Force Calculation + Visual Overlay**
 
 **Change:** Added G-force tracking and visual effects to the flight system:

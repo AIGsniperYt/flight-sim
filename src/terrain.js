@@ -182,11 +182,15 @@ export function getHeightScaled(worldX, worldZ, lodScale = 1.0) {
 
 export function getTerrainColorAt(worldX, worldZ) {
     const h = getHeight(worldX, worldZ);
+    const moisture = snoise2D(worldX * 0.002, worldZ * 0.002) * 0.5 + 0.5;
+    const m = Math.max(0, Math.min(1, moisture));
 
-    const lowColor = { r: 0.25, g: 0.48, b: 0.20 };
-    const midColor = { r: 0.42, g: 0.32, b: 0.20 };
-    const highColor = { r: 0.45, g: 0.45, b: 0.48 };
-    const snowColor = { r: 0.95, g: 0.95, b: 0.98 };
+    const dryGrass = { r: 0.604, g: 0.584, b: 0.353 };
+    const rainforest = { r: 0.176, g: 0.420, b: 0.118 };
+    const shrubland = { r: 0.478, g: 0.502, b: 0.196 };
+    const forest = { r: 0.227, g: 0.490, b: 0.204 };
+    const tundra = { r: 0.541, g: 0.604, b: 0.541 };
+    const snow = { r: 0.941, g: 0.941, b: 0.961 };
 
     const clampVal = (val, min, max) => Math.max(min, Math.min(max, val));
     const smoothstepVal = (edge0, edge1, x) => {
@@ -194,19 +198,23 @@ export function getTerrainColorAt(worldX, worldZ) {
         return t * t * (3.0 - 2.0 * t);
     };
 
-    const t1 = smoothstepVal(80.0, 150.0, h);
-    const t2 = smoothstepVal(150.0, 300.0, h);
-    const t3 = smoothstepVal(500.0, 650.0, h);
-
     const mixColors = (c1, c2, t) => ({
         r: c1.r + (c2.r - c1.r) * t,
         g: c1.g + (c2.g - c1.g) * t,
         b: c1.b + (c2.b - c1.b) * t
     });
 
-    let col = mixColors(lowColor, midColor, t1);
-    col = mixColors(col, highColor, t2);
-    col = mixColors(col, snowColor, t3);
+    const lowCol = mixColors(dryGrass, rainforest, m);
+    const midCol = mixColors(shrubland, forest, m);
+    const highCol = tundra;
+
+    const t1 = smoothstepVal(80.0, 150.0, h);
+    const t2 = smoothstepVal(300.0, 500.0, h);
+    const t3 = smoothstepVal(500.0, 650.0, h);
+
+    let col = mixColors(lowCol, midCol, t1);
+    col = mixColors(col, highCol, t2);
+    col = mixColors(col, snow, t3);
 
     return {
         r: Math.round(col.r * 255),
@@ -235,10 +243,10 @@ export function clearCache() {
 }
 
 export function getColorComponents(y) {
-    const lowColor = { r: 0.25, g: 0.48, b: 0.20 };
-    const midColor = { r: 0.42, g: 0.32, b: 0.20 };
-    const highColor = { r: 0.45, g: 0.45, b: 0.48 };
-    const snowColor = { r: 0.95, g: 0.95, b: 0.98 };
+    const dryGrass = { r: 0.604, g: 0.584, b: 0.353 };
+    const shrubland = { r: 0.478, g: 0.502, b: 0.196 };
+    const tundra = { r: 0.541, g: 0.604, b: 0.541 };
+    const snow = { r: 0.941, g: 0.941, b: 0.961 };
 
     const clampVal = (val, min, max) => Math.max(min, Math.min(max, val));
     const smoothstepVal = (edge0, edge1, x) => {
@@ -246,19 +254,19 @@ export function getColorComponents(y) {
         return t * t * (3.0 - 2.0 * t);
     };
 
-    const t1 = smoothstepVal(80.0, 150.0, y);
-    const t2 = smoothstepVal(150.0, 300.0, y);
-    const t3 = smoothstepVal(500.0, 650.0, y);
-
     const mixColors = (c1, c2, t) => ({
         r: c1.r + (c2.r - c1.r) * t,
         g: c1.g + (c2.g - c1.g) * t,
         b: c1.b + (c2.b - c1.b) * t
     });
 
-    let col = mixColors(lowColor, midColor, t1);
-    col = mixColors(col, highColor, t2);
-    col = mixColors(col, snowColor, t3);
+    const t1 = smoothstepVal(80.0, 150.0, y);
+    const t2 = smoothstepVal(300.0, 500.0, y);
+    const t3 = smoothstepVal(500.0, 650.0, y);
+
+    let col = mixColors(dryGrass, shrubland, t1);
+    col = mixColors(col, tundra, t2);
+    col = mixColors(col, snow, t3);
 
     return col;
 }

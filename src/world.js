@@ -57,7 +57,7 @@ float computeHeight(float wx, float wz, float baseScale, float hillScale, float 
     float hill = snoise(warpPos * hillScale) * heightScale * hillHeightMultiplier;
 
     float mountainRegion = snoise(pos * 0.0005);
-    float mountainMask = smoothstep(0.1, 0.4, mountainRegion) * smoothstep(0.0, 25.0, continent);
+    float mountainMask = smoothstep(-0.2, 0.3, mountainRegion) * smoothstep(-10.0, 20.0, continent);
 
     float rawMountain = max(0.0, snoise(warpPos * 0.0003));
     float mountainBase = rawMountain * rawMountain * 800.0 * mountainMask;
@@ -237,6 +237,7 @@ function initMeshes(scene) {
             shader.uniforms.continentScale = { value: 0.0005 };
             shader.uniforms.warpScale = { value: 0.002 };
             shader.uniforms.ridgeScale = { value: 0.001 };
+            shader.uniforms.moistureScale = { value: 0.002 };
 
             shader.vertexShader = `
                 ${simplexNoiseGLSL}
@@ -250,7 +251,10 @@ function initMeshes(scene) {
                 uniform float continentScale;
                 uniform float warpScale;
                 uniform float ridgeScale;
+                uniform float moistureScale;
                 varying float vHeight;
+                varying float vMoisture;
+                varying vec3 vWorldPos;
                 ${shader.vertexShader}
             `;
 
@@ -261,12 +265,16 @@ function initMeshes(scene) {
                 float h = computeHeight(transformed.x, transformed.z, baseScale, hillScale, mountainScale, heightScale, flatnessFactor, hillHeightMultiplier, mountainHeightMultiplier, continentScale, warpScale, ridgeScale);
                 transformed.y = h;
                 vHeight = h;
+                vMoisture = snoise(vec2(transformed.x, transformed.z) * moistureScale) * 0.5 + 0.5;
+                vWorldPos = vec3(transformed.x, h, transformed.z);
                 `
             );
 
             shader.fragmentShader = `
                 uniform float heightScale;
                 varying float vHeight;
+                varying float vMoisture;
+                varying vec3 vWorldPos;
                 ${shader.fragmentShader}
             `;
 
@@ -275,16 +283,34 @@ function initMeshes(scene) {
                 `
                 #include <color_fragment>
                 float h = vHeight;
-                vec3 lowColor = vec3(0.25, 0.48, 0.20);
-                vec3 midColor = vec3(0.42, 0.32, 0.20);
-                vec3 highColor = vec3(0.45, 0.45, 0.48);
-                vec3 snowColor = vec3(0.95, 0.95, 0.98);
+                float moisture = clamp(vMoisture, 0.0, 1.0);
+
+                vec3 dx = dFdx(vWorldPos);
+                vec3 dz = dFdy(vWorldPos);
+                vec3 n = normalize(cross(dx, dz));
+                float slopeDeg = degrees(acos(clamp(n.y, 0.0, 1.0)));
+                float rockMix = smoothstep(30.0, 50.0, slopeDeg);
+
+                vec3 dryGrass = vec3(0.604, 0.584, 0.353);
+                vec3 rainforest = vec3(0.176, 0.420, 0.118);
+                vec3 shrubland = vec3(0.478, 0.502, 0.196);
+                vec3 forest = vec3(0.227, 0.490, 0.204);
+                vec3 tundra = vec3(0.541, 0.604, 0.541);
+                vec3 rock = vec3(0.420, 0.420, 0.420);
+                vec3 snow = vec3(0.941, 0.941, 0.961);
+
+                vec3 lowCol = mix(dryGrass, rainforest, moisture);
+                vec3 midCol = mix(shrubland, forest, moisture);
+                vec3 highCol = tundra;
+
                 float t1 = smoothstep(80.0, 150.0, h);
-                float t2 = smoothstep(150.0, 300.0, h);
+                float t2 = smoothstep(300.0, 500.0, h);
                 float t3 = smoothstep(500.0, 650.0, h);
-                vec3 col = mix(lowColor, midColor, t1);
-                col = mix(col, highColor, t2);
-                col = mix(col, snowColor, t3);
+
+                vec3 col = mix(lowCol, midCol, t1);
+                col = mix(col, highCol, t2);
+                col = mix(col, snow, t3);
+                col = mix(col, rock, rockMix);
                 diffuseColor.rgb = col;
                 `
             );
@@ -537,9 +563,10 @@ export function updateChunks(scene, camera, frustum, vx = 0, vz = 0) {
 
         globalChunks.forEach((entry) => {
             const x = entry.chunkX, z = entry.chunkZ;
+            const range = LOD_HEIGHT_RANGES[entry.lod];
 
-            _frustumBBox.min.set(x * CHUNK_SIZE - FRUSTUM_MARGIN, -200, z * CHUNK_SIZE - FRUSTUM_MARGIN);
-            _frustumBBox.max.set((x + 1) * CHUNK_SIZE + FRUSTUM_MARGIN, 200, (z + 1) * CHUNK_SIZE + FRUSTUM_MARGIN);
+            _frustumBBox.min.set(x * CHUNK_SIZE - FRUSTUM_MARGIN, range.min, z * CHUNK_SIZE - FRUSTUM_MARGIN);
+            _frustumBBox.max.set((x + 1) * CHUNK_SIZE + FRUSTUM_MARGIN, range.max, (z + 1) * CHUNK_SIZE + FRUSTUM_MARGIN);
 
             if (frustum.intersectsBox(_frustumBBox)) {
                 if (entry.hidden) {
