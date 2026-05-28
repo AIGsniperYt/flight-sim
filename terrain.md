@@ -32,13 +32,14 @@ Where `staircase` is:
 t = smoothstep(-0.7, -0.4, pf);  profile = mix(0, 80, t)    // 0m → 80m plateau  (gentle, width 0.3)
 t = smoothstep(-0.1, 0.1, pf);   profile = mix(80, 200, t)  // 80m → 200m plateau (moderate, width 0.2)
 t = smoothstep(0.35, 0.5, pf);   profile = mix(200, 400, t) // 200m → 400m plateau (soft, width 0.15)
-t = smoothstep(0.65, 0.7, pf);   profile = mix(400, 600, t) // 400m → 600m platform (dramatic, width 0.05)
+t = smoothstep(0.64, 0.71, pf);  profile = mix(400, 600, t) // 400m → 600m platform (dramatic, width 0.07)
 ```
 
 - Period: ~20944 world units (one full noise cycle of the shaping field)
 - Range: 0m to 600m (five discrete tiers)
 - Purpose: Creates broad plateaus at 0, 80, 200, 400, and 600m with transitions between them.
-- Transition widths decrease **exponentially** with height: 0.3 → 0.2 → 0.15 → 0.05. This matches real mountain formation — lower slopes weather into gentle hills, while only the highest tier retains the raw sharpness of tectonic uplift. A sharp cliff in the middle of a grassland looks unnatural, so those lower transitions are kept gradual.
+- Transition widths decrease **exponentially** with height: 0.3 → 0.2 → 0.15 → 0.07. This matches real mountain formation — lower slopes weather into gentle hills, while only the highest tier retains the raw sharpness of tectonic uplift. A sharp cliff in the middle of a grassland looks unnatural, so those lower transitions are kept gradual.
+- Transitions use a **logistic sigmoid** (`sigmoidStep`) instead of the standard cubic Hermite `smoothstep`. The sigmoid approaches 0 and 1 asymptotically, so the ground begins its ascent more gradually and settles back into the next plateau more gently. This reduces the "hard band" look where plateau edges visibly start sloping at a clean line. The steepness constant `k = 5/width` produces a gentler curve than smoothstep's midpoint slope of `1.5/width`.
 - The 0m lowland tier is deliberately rare (only terrain below −0.7 in noise space, ~7–10% of land area). This creates infrequent basins that can logically hold lakes without requiring a separate water system.
 
 Each plateau is a flat zone where the profile holds constant. The gaps between plateaus are transition slopes of varying steepness.

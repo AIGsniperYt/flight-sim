@@ -1,5 +1,19 @@
 # Changelog
 
+## **28/05/2026 — Height Profile Refinement: Exponential Tapering + Sigmoid Transitions**
+
+**What changed:** Two rounds of tuning after flying the initial height profile:
+
+1. **Exponential tapering** — transition widths now shrink with height (0.30 → 0.20 → 0.15 → 0.07). Lower tiers roll gently; only the top tier is dramatically sharp. This fixed grass-covered cliffs at 200m and 400m that looked like bugs, and made mountain bases feel like real foothills instead of random raised plateaus.
+
+2. **Sigmoid instead of smoothstep** — replaced the cubic Hermite `smoothstep` with a logistic sigmoid for all profile transitions. The sigmoid approaches 0 and 1 asymptotically instead of reaching them exactly at the edges, which means the ground begins its ascent more gradually and settles back into the next plateau more gently. This reduces the "hard band" look where plateau edges visibly start sloping at a clean line.
+
+**Emergent result:** The transition zones between plateaus now form natural mountain-access paths — continuous ramp-like features that look eroded rather than generated. You can follow a streambed from a 200m plateau up a mountain ridge.
+
+**Remaining:** Rare grass cliffs still occur where a sharp transition lands in a dry biome zone (slope right at the ~30° cusp of the rock override). The sigmoid helps slightly by softening the band edges, but this is ultimately a slope-override precision limit — acceptable for now.
+
+---
+
 ## **28/05/2026 — Height Profile: Plateau/Terrace Elevation System**
 
 **The problem:** The terrain was generated on a flat base plane — everything started from height 0 and noise was stacked on top. This made the world feel like an endless rumpled blanket: no elevation hierarchy, no levels, just smooth bumps everywhere regardless of where you were. Flying at 200m felt the same as flying at 500m because the terrain underneath was just "more noise." Biome colouring tried to add variety, but colour is just paint — the shape underneath was still flat.

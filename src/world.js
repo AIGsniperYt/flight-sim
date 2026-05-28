@@ -46,20 +46,30 @@ float ridgedNoise(vec2 p) {
     return n * n;
 }
 
+// Softer alternative to smoothstep: logistic sigmoid with adjustable steepness.
+// Approaches 0/1 asymptotically, making transitions begin and end more gradually.
+// This reduces the "hard band" look where plateau edges start sloping abruptly.
+float sigmoidStep(float edge0, float edge1, float x) {
+    float mid = (edge0 + edge1) * 0.5;
+    float k = 5.0 / (edge1 - edge0);
+    float t = clamp((x - mid) * k, -10.0, 10.0);
+    return 1.0 / (1.0 + exp(-t));
+}
+
 float computeHeight(float wx, float wz, float baseScale, float hillScale, float mountainScale, float heightScale, float flatnessFactor, float hillHeightMultiplier, float mountainHeightMultiplier, float continentScale, float warpScale, float ridgeScale) {
     vec2 pos = vec2(wx, wz);
 
     // Height profile — a shaping field passed through a staircase function.
-    // Transition widths decrease exponentially with height (0.3 → 0.2 → 0.15 → 0.05)
+    // Transition widths decrease exponentially with height (0.3 → 0.2 → 0.15 → 0.07)
     // so lower tiers roll gently and only the highest tier is dramatically sharp.
     // The 0m lowland tier is kept rare so it can hold lakes.
     float pf = snoise(pos * 0.0003);
     float profile = 0.0;
     float t;
-    t = smoothstep(-0.7, -0.4, pf);  profile = mix(0.0, 80.0, t);
-    t = smoothstep(-0.1, 0.1, pf);   profile = mix(profile, 200.0, t);
-    t = smoothstep(0.35, 0.5, pf);   profile = mix(profile, 400.0, t);
-    t = smoothstep(0.65, 0.7, pf);   profile = mix(profile, 600.0, t);
+    t = sigmoidStep(-0.7, -0.4, pf);  profile = mix(0.0, 80.0, t);
+    t = sigmoidStep(-0.1, 0.1, pf);   profile = mix(profile, 200.0, t);
+    t = sigmoidStep(0.35, 0.5, pf);   profile = mix(profile, 400.0, t);
+    t = sigmoidStep(0.64, 0.71, pf);  profile = mix(profile, 600.0, t);
 
     float warpX = snoise(pos * warpScale) * 100.0;
     float warpZ = snoise(pos * warpScale + vec2(5.2, 1.3)) * 100.0;
