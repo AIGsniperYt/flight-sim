@@ -1,5 +1,12 @@
 # Changelog
 
+## **29/05/2026 — Housekeeping: .md docs refactored into `docs/`, devlog tracker created**
+
+**What changed:** The root directory was accumulating standalone `.md` files. All documentation (bug analysis, physics notes, specs, reports, solutions, terrain docs, performance comparisons) now lives under `docs/`. Root keeps only `README.md`, `changelog.md`, `benchmark.md`, `devlogs.md`, and `LICENSE`.
+
+- Created `devlogs.md` — a commit-by-commit tracker with coverage status and notes, organised by theme (Optimisation, Physics, Terrain, etc.), ready for devlog planning.
+- All cross-references in `changelog.md` updated to point to the new `docs/` paths.
+
 ## **28/05/2026 — Water: Lakes in the 0m Lowland Basins**
 
 **What changed:** The rare 0m lowland basins (~7–10% of terrain) now fill with water. A `waterLevel` is checked in the fragment shader — any terrain below this renders as lake blue.
@@ -425,7 +432,7 @@ No visible downside: chunks start hidden (Y=-99999), frustum re-eval runs after 
 
 ## **25/05/2026 — Benchmark: Pre-Load All Chunks**
 
-**Results** (see benchmark.md for full data):
+**Results** (see [benchmark.md](benchmark.md) for full data):
 
 | Metric | Frustum Cull (cruise) | Pre-Load All (cruise) | Delta |
 |---|---|---|---|
@@ -683,7 +690,7 @@ No further tuning needed — current cache comfortably holds all tiles touched d
 
 **Fix applied:**
 1. **Reverted `world.js`** to GPU noise — chunk gen restored to ~0.065ms/frame
-2. **Ported GLSL Gustavson `snoise` to JS** in `terrain.js` — line-for-line match of mod289, permute, taylorInvSqrt, fade, gradient selection ([full breakdown](bug1.md))
+2. **Ported GLSL Gustavson `snoise` to JS** in `terrain.js` — line-for-line match of mod289, permute, taylorInvSqrt, fade, gradient selection ([full breakdown](docs/bug1.md))
 3. **Removed `simplex-noise` npm dependency** — zero external deps for terrain.js
 4. **Collision now uses `getHeightScaled(..., 1.0)`** — quantized to match near-LOD rendered surface
 
@@ -721,7 +728,7 @@ if (alt < 0) { /* crash or land */ }
 - Tile cache: only used by minimap — no thrashing (0 evictions in final benchmark)
 - Zero external dependencies for terrain.js
 
-**See [`bug1.md`](bug1.md) for full root-cause analysis, data flow diagrams, and verification steps.**
+**See [`docs/bug1.md`](docs/bug1.md) for full root-cause analysis, data flow diagrams, and verification steps.**
 
 ---
 
@@ -929,7 +936,7 @@ export function getHeight(worldX, worldZ) {
 ### **Merged Geometries per LOD (Draw Call Reduction)**
 **OPT:** Drastically reduced draw calls from ~2600 to 12 by replacing per-chunk `THREE.Mesh` objects with incrementally-updated, pre-allocated merged geometries.
 Uses 12 static meshes (3 LODs × 4 world quadrants) to maintain frustum culling while completely eliminating object creation and chunk pooling. 
-*Detailed metrics, benchmarking tables, and architectural explanations are documented in [performance_comparison.md](file:///c:/Users/thahm/OneDrive/Documents/website/webgl/flight-sim/performance_comparison.md).*
+*Detailed metrics, benchmarking tables, and architectural explanations are documented in [docs/performance_comparison.md](docs/performance_comparison.md).*
 
 **Before:**
 ```js
