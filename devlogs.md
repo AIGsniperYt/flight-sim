@@ -11,10 +11,10 @@
 
 | Date | Commit | Message | Covered | Notes |
 |---|---|---|---|---|
-| 2025-09-16 | `408815d` | Update README.md | ❌ | |
-| 2025-09-16 | `477f115` | Add files via upload | ❌ | |
-| 2026-05-21 | `133f4fd` | Import existing flight sim project into submodule | ❌ | |
-| 2026-05-21 | `d24af20` | refactor into es6 modules | ❌ | |
+| 2025-09-16 | `408815d` | Update README.md | ✅ | Trivial setup — covered (no devlog needed) |
+| 2025-09-16 | `477f115` | Add files via upload | ✅ | Trivial setup — covered (no devlog needed) |
+| 2026-05-21 | `133f4fd` | Import existing flight sim project into submodule | ✅ | Trivial setup — covered (no devlog needed) |
+| 2026-05-21 | `d24af20` | refactor into es6 modules | ❌ | First real cleanup — split main.js into modules |
 | 2026-05-22 | `fe06717` | further minor tweaks | ❌ | |
 | 2026-05-22 | `8da2587` | MAJOR physics improvement | ❌ | |
 

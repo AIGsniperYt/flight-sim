@@ -195,6 +195,23 @@ const flightState = {
 syncFlightStateAircraft();
 
 const keyboard = {};
+let _suppressFlightInputs = false;
+let _frozenPos = null;
+let _frozenVel = null;
+let _isFrozen = false;
+export function setSuppressFlightInputs(v) { _suppressFlightInputs = v; }
+export function setFrozen(frozen) {
+    if (frozen && !_isFrozen) {
+        _frozenPos = plane.position.clone();
+        _frozenVel = velocity.clone();
+        _isFrozen = true;
+    } else if (!frozen && _isFrozen) {
+        if (_frozenVel) velocity.copy(_frozenVel);
+        _frozenPos = null;
+        _frozenVel = null;
+        _isFrozen = false;
+    }
+}
 
 const cameraOffset = new THREE.Vector3(0, 5, 18);
 
@@ -429,10 +446,10 @@ export function resetAircraft() {
 export function updatePlane(dt) {
     if (_crashed) { _physicsTime = 0; return; }
     const _start = performance.now();
-    const pitchInput = (keyboard['KeyW'] ? 1 : 0) + (keyboard['KeyS'] ? -1 : 0);
-    const rollInput  = (keyboard['KeyA'] ? 1 : 0) + (keyboard['KeyD'] ? -1 : 0);
-    const yawInput   = (keyboard['KeyQ'] ? 1 : 0) + (keyboard['KeyE'] ? -1 : 0);
-    const throttleInput = (keyboard['ArrowUp'] ? 1 : 0) + (keyboard['ArrowDown'] ? -1 : 0);
+    const pitchInput = _suppressFlightInputs ? 0 : (keyboard['KeyW'] ? 1 : 0) + (keyboard['KeyS'] ? -1 : 0);
+    const rollInput  = _suppressFlightInputs ? 0 : (keyboard['KeyA'] ? 1 : 0) + (keyboard['KeyD'] ? -1 : 0);
+    const yawInput   = _suppressFlightInputs ? 0 : (keyboard['KeyQ'] ? 1 : 0) + (keyboard['KeyE'] ? -1 : 0);
+    const throttleInput = _suppressFlightInputs ? 0 : (keyboard['ArrowUp'] ? 1 : 0) + (keyboard['ArrowDown'] ? -1 : 0);
     const controls = AIRCRAFT.controls;
 
     throttle = THREE.MathUtils.clamp(throttle + throttleInput * dt, 0, 1);
@@ -582,6 +599,10 @@ export function updatePlane(dt) {
     const rawG = acceleration.length() / GRAVITY + 1.0;
     _smoothedGForce += (rawG - _smoothedGForce) * Math.min(1, dt * 8);
     flightState.gForce = _smoothedGForce;
+    if (_isFrozen && _frozenPos) {
+        plane.position.copy(_frozenPos);
+        velocity.set(0, 0, 0);
+    }
     _physicsTime = performance.now() - _start;
     updateDebugVectorArrows();
 }

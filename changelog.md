@@ -7,6 +7,22 @@
 - Created `devlogs.md` — a commit-by-commit tracker with coverage status and notes, organised by theme (Optimisation, Physics, Terrain, etc.), ready for devlog planning.
 - All cross-references in `changelog.md` updated to point to the new `docs/` paths.
 
+## **30/05/2026 — Freecam Mode (C key)**
+
+**What changed:** Press C to detach the camera from the plane and fly around freely, Roblox-style. Plane **freezes in place** when you enter freecam — press **R** to release it and watch it fly like a remote-controlled drone.
+
+- **Movement:** WASD moves camera position relative to view direction, E/Q moves up/down. Base speed 80 units/sec.
+- **Scroll to zoom:** Scrolling in freecam adjusts a speed multiplier (×0.1 to ×50, shown in debug panel). Scroll up to race across the terrain faster, scroll down to creep slowly.
+- **Mouse look:** Click and drag rotates camera view (yaw/pitch), not an orbit — true first-person-style freecam.
+- **Plane frozen on entry:** Entering freecam freezes the plane mid-air — position locked, velocity zeroed, controls suspended. Display shows `✈FROZEN`.
+- **Release with R:** Press R to unfreeze the plane. Controls return to the plane, it resumes flying. Camera **locks in place** — WASDQE, mouse look, and scroll are all disabled. Watch it zoom past like a stationary RC drone spectator. Display shows `✈FREE LOCKED`.
+- **Reattach:** Press C again to snap back to chase cam behind the plane. If the plane was frozen, it's unfrozen automatically.
+- **Transitions naturally:** If you're in orbit mode (mouse click), pressing C enters freecam instead. Coming back from freecam always returns to chase.
+
+**Files:** `main.js` (enterFreecam/exitFreecam, updateOrbitCamera, mouse drag + key tracking, R key handler), `physics.js` (setFrozen, setSuppressFlightInputs).
+
+---
+
 ## **28/05/2026 — Water: Lakes in the 0m Lowland Basins**
 
 **What changed:** The rare 0m lowland basins (~7–10% of terrain) now fill with water. A `waterLevel` is checked in the fragment shader — any terrain below this renders as lake blue.

@@ -19,7 +19,9 @@ import {
     resetAircraft,
     getDebugVectorLegend,
     setDebugReferenceVectorsVisible,
-    setDebugVectorsVisible
+    setDebugVectorsVisible,
+    setSuppressFlightInputs,
+    setFrozen
 } from './src/physics.js';
 
 const scene = new THREE.Scene();
@@ -59,6 +61,12 @@ const viewProjectionMatrix = new THREE.Matrix4();
 const cameraFollowTarget = new THREE.Vector3().copy(getPlane().position);
 const cameraTargetDelta = new THREE.Vector3();
 const defaultCameraOffset = new THREE.Vector3(0, 5, 18);
+const freeCamKeys = { w: false, a: false, s: false, d: false, q: false, e: false };
+const freeCamBaseSpeed = 80;
+let freeCamSpeedMul = 1;
+let freeCamYaw = 0, freeCamPitch = 0;
+let freeCamMouseDown = false;
+let freeCamLastMX = 0, freeCamLastMY = 0;
 const debugVectorLegend = getDebugVectorLegend().filter((entry) => !entry.reference).map((entry) =>
     `<span style="white-space:nowrap;"><span style="display:inline-block;width:0.8em;height:0.8em;background:${entry.color};margin-right:4px;"></span>${entry.label}</span>`
 ).join(' ');
@@ -99,11 +107,62 @@ function enterOrbitCamera() {
     cameraControls.update();
 }
 
+let freecamPlaneFrozen = true;
+
+function enterFreecam() {
+    if (cameraMode === 'freecam') return;
+    const euler = new THREE.Euler().setFromQuaternion(camera.quaternion, 'YXZ');
+    freeCamYaw = euler.y;
+    freeCamPitch = euler.x;
+    cameraMode = 'freecam';
+    cameraControls.enabled = false;
+    freecamPlaneFrozen = true;
+    setSuppressFlightInputs(true);
+    setFrozen(true);
+}
+
+function exitFreecam() {
+    if (cameraMode !== 'freecam') return;
+    cameraMode = 'chase';
+    cameraControls.enabled = false;
+    setSuppressFlightInputs(false);
+    setFrozen(false);
+    resetChaseCamera();
+}
+
+document.addEventListener('pointerdown', (event) => {
+    if (cameraMode === 'freecam' && event.button === 0) {
+        freeCamMouseDown = true;
+        freeCamLastMX = event.clientX;
+        freeCamLastMY = event.clientY;
+    }
+});
+
+document.addEventListener('pointermove', (event) => {
+    if (cameraMode === 'freecam' && freeCamMouseDown) {
+        freeCamYaw -= (event.clientX - freeCamLastMX) * 0.005;
+        freeCamPitch -= (event.clientY - freeCamLastMY) * 0.005;
+        freeCamPitch = Math.max(-1.4, Math.min(1.4, freeCamPitch));
+        freeCamLastMX = event.clientX;
+        freeCamLastMY = event.clientY;
+    }
+});
+
+document.addEventListener('pointerup', () => {
+    if (cameraMode === 'freecam') freeCamMouseDown = false;
+});
+
+renderer.domElement.addEventListener('wheel', (event) => {
+    if (cameraMode === 'freecam') {
+        freeCamSpeedMul = Math.max(0.1, Math.min(50, freeCamSpeedMul * (event.deltaY > 0 ? 0.85 : 1.15)));
+    }
+}, { passive: true });
+
 resetChaseCamera();
 applyDebugArrowVisibility();
 
 renderer.domElement.addEventListener('pointerdown', (event) => {
-    if (event.button <= 2) enterOrbitCamera();
+    if (event.button <= 2 && cameraMode !== 'freecam') enterOrbitCamera();
 }, true);
 
 const debugDiv = document.createElement('div');
@@ -377,7 +436,17 @@ document.addEventListener('keydown', (event) => {
         gForceEffectEnabled = !gForceEffectEnabled;
         if (!gForceEffectEnabled) gForceOverlay.style.opacity = '0';
     } else if (event.code === 'KeyC' && !event.ctrlKey && !event.metaKey) {
-        resetChaseCamera();
+        if (cameraMode === 'freecam') {
+            exitFreecam();
+        } else {
+            enterFreecam();
+        }
+    } else if (event.code === 'KeyR' && !event.ctrlKey && !event.metaKey) {
+        if (cameraMode === 'freecam') {
+            freecamPlaneFrozen = !freecamPlaneFrozen;
+            setSuppressFlightInputs(freecamPlaneFrozen);
+            setFrozen(freecamPlaneFrozen);
+        }
     } else if (event.code === 'KeyJ' && !event.ctrlKey && !event.metaKey) {
         toggleGapMode(scene);
     } else if (event.code === 'KeyP' && !event.ctrlKey && !event.metaKey) {
@@ -393,6 +462,28 @@ document.addEventListener('keydown', (event) => {
     } else if (event.code === 'KeyU' && !event.ctrlKey && !event.metaKey) {
         const on = toggleWireframe();
         console.log(`Wireframe: ${on ? 'ON' : 'OFF'}`);
+    }
+
+    if (cameraMode === 'freecam') {
+        switch (event.code) {
+            case 'KeyW': freeCamKeys.w = true; break;
+            case 'KeyA': freeCamKeys.a = true; break;
+            case 'KeyS': freeCamKeys.s = true; break;
+            case 'KeyD': freeCamKeys.d = true; break;
+            case 'KeyQ': freeCamKeys.q = true; break;
+            case 'KeyE': freeCamKeys.e = true; break;
+        }
+    }
+});
+
+document.addEventListener('keyup', (event) => {
+    switch (event.code) {
+        case 'KeyW': freeCamKeys.w = false; break;
+        case 'KeyA': freeCamKeys.a = false; break;
+        case 'KeyS': freeCamKeys.s = false; break;
+        case 'KeyD': freeCamKeys.d = false; break;
+        case 'KeyQ': freeCamKeys.q = false; break;
+        case 'KeyE': freeCamKeys.e = false; break;
     }
 });
 
@@ -446,7 +537,7 @@ function updateDebug(dt) {
             Physics: ${getPhysicsStats().physicsTime.toFixed(2)} ms<br>
             Terrain Cache: ${(function(){ const t=getTerrainStats(); return `${t.tiles} tiles &nbsp; ${t.tileHits}H/${t.tileMisses}M &nbsp; gen:${t.tilesGenerated} evict:${t.tileEvictions}`; })()}<br>
             Chunks: ${getShowGaps() ? 'GAPPED (dev)' : 'SEAMLESS'} <b>J</b> toggles<br>
-            Camera Mode: ${cameraMode}<br>
+            Camera Mode: ${cameraMode}${cameraMode === 'freecam' ? ` ×${freeCamSpeedMul.toFixed(1)} ${freecamPlaneFrozen ? '✈FROZEN' : '✈FREE LOCKED'}` : ''}<br>
             Camera: (${camera.position.x.toFixed(1)}, ${camera.position.y.toFixed(1)}, ${camera.position.z.toFixed(1)})<br>
             Camera Target: (${cameraControls.target.x.toFixed(1)}, ${cameraControls.target.y.toFixed(1)}, ${cameraControls.target.z.toFixed(1)})<br>
             Plane: (${plane.position.x.toFixed(1)}, ${plane.position.y.toFixed(1)}, ${plane.position.z.toFixed(1)})<br>
@@ -638,7 +729,7 @@ function drawMinimap(now) {
     minimapReadout.textContent = `MAP ${MINIMAP_WORLD_SIZE} m | X ${fmt(plane.position.x, 0)} Z ${fmt(plane.position.z, 0)}`;
 }
 
-function updateOrbitCamera() {
+function updateOrbitCamera(dt) {
     const plane = getPlane();
 
     if (cameraMode === 'chase') {
@@ -647,6 +738,24 @@ function updateOrbitCamera() {
         camera.quaternion.copy(plane.quaternion);
         cameraControls.target.copy(plane.position);
         cameraFollowTarget.copy(plane.position);
+        return;
+    }
+
+    if (cameraMode === 'freecam') {
+        const euler = new THREE.Euler(freeCamPitch, freeCamYaw, 0, 'YXZ');
+        const quat = new THREE.Quaternion().setFromEuler(euler);
+        if (freecamPlaneFrozen) {
+            const speed = freeCamBaseSpeed * freeCamSpeedMul * Math.min(dt, 0.05);
+            const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(quat);
+            const right = new THREE.Vector3(1, 0, 0).applyQuaternion(quat);
+            if (freeCamKeys.w) camera.position.addScaledVector(dir, speed);
+            if (freeCamKeys.s) camera.position.addScaledVector(dir, -speed);
+            if (freeCamKeys.a) camera.position.addScaledVector(right, -speed);
+            if (freeCamKeys.d) camera.position.addScaledVector(right, speed);
+            if (freeCamKeys.e) camera.position.y += speed;
+            if (freeCamKeys.q) camera.position.y -= speed;
+        }
+        camera.quaternion.copy(quat);
         return;
     }
 
@@ -769,7 +878,7 @@ function animate() {
     lastFrameTime = now;
 
     updatePlane(dt);
-    updateOrbitCamera();
+    updateOrbitCamera(dt);
 
     camera.updateMatrixWorld();
     viewProjectionMatrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);

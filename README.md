@@ -12,20 +12,47 @@ A browser-based 3D flight simulator built with Three.js featuring procedurally g
 
 ## Controls
 
-- **W/S**: Pitch up/down
-- **A/D**: Roll left/right
-- **Q/E**: Yaw left/right
-- **Shift/Ctrl**: Increase/decrease throttle
-- **Left mouse drag**: Switch from chase camera to orbit camera
-- **Right/middle mouse drag**: Switch from chase camera to panning orbit camera
-- **Mouse wheel**: Zoom camera
-- **C**: Return to chase camera
-- **J**: Toggle chunk gap mode (dev: visible gaps / player: seamless terrain)
-- **F**: Toggle flight instrument
-- **M**: Toggle minimap
-- **F5**: Toggle debug information
-- **F6**: Toggle debug vector arrows
-- **F7**: Toggle reference arrows such as forward/right/up axes
+### Flight Controls
+| Key | Action |
+|-----|--------|
+| **W** | Pitch down (nose down) |
+| **S** | Pitch up (nose up) |
+| **A** | Roll left |
+| **D** | Roll right |
+| **Q** | Yaw left |
+| **E** | Yaw right |
+| **Arrow Up** | Increase throttle |
+| **Arrow Down** | Decrease throttle |
+| **Space** | Airbrake (hold) |
+
+### Camera Modes
+
+| Key / Input | Action |
+|-------------|--------|
+| **Left mouse drag** | Orbit camera around plane |
+| **Right/middle mouse drag** | Pan orbit camera around plane |
+| **Mouse wheel** | Zoom orbit camera |
+| **C** | Toggle freecam (detached camera) |
+| **R** | In freecam: toggle plane freeze/release |
+| **Freecam WASD** | Move camera forward/back/left/right |
+| **Freecam Q/E** | Move camera down/up |
+| **Freecam scroll** | Adjust freecam speed (×0.1–×50) |
+| **Freecam click+drag** | Pan camera view |
+
+### Display Toggles
+
+| Key | Action |
+|-----|--------|
+| **F** | Toggle flight instrument panel |
+| **M** | Toggle minimap |
+| **G** | Toggle G-force overlay |
+| **U** | Cycle wireframe mode (all LODs) |
+| **F5** | Toggle debug information panel |
+| **F6** | Toggle debug vector arrows |
+| **F7** | Toggle reference axes arrows |
+| **J** | Toggle chunk gap mode (dev/player) |
+| **K** | Toggle collisions on/off |
+| **P** | Cycle aircraft preset
 
 ## Getting Started
 
