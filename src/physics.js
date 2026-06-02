@@ -538,8 +538,8 @@ export function updatePlane(dt) {
             if (_collisionsEnabled) {
                 const craftPitch = Math.asin(THREE.MathUtils.clamp(forward.y, -1, 1));
                 const craftBank = Math.atan2(right.y, up.y);
-                const isLevel = Math.abs(craftPitch) <= deg(25) && Math.abs(craftBank) <= deg(25);
-                const hardDesc = velocity.y < -30;
+                const isLevel = Math.abs(craftPitch) <= deg(15) && Math.abs(craftBank) <= deg(15);
+                const hardDesc = velocity.y < -8;
                 const overspeed = impactSpeed >= AIRCRAFT.crashSpeed;
                 if (!isLevel || hardDesc || overspeed) {
                     _crashed = true;
@@ -560,6 +560,14 @@ export function updatePlane(dt) {
             if (velocity.y < 0) velocity.y = 0;
         }
     }
+
+    const _pitch = Math.asin(THREE.MathUtils.clamp(forward.y, -1, 1));
+    const _bank = Math.atan2(right.y, up.y);
+    flightState.pitchOk = Math.abs(_pitch) <= deg(25);
+    flightState.bankOk = Math.abs(_bank) <= deg(25);
+    flightState.descOk = velocity.y >= -30;
+    flightState.speedOk = speed < AIRCRAFT.crashSpeed;
+    flightState.canLand = !_crashed && flightState.pitchOk && flightState.bankOk && flightState.descOk && flightState.speedOk;
 
     flightState.speed = speed;
     flightState.throttle = throttle;

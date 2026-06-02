@@ -155,11 +155,11 @@ const LOD_CONFIGS = {
 };
 
 const LOD_HEIGHT_RANGES = {
-    near: { min: -10, max: 1000 },
-    mid: { min: -5, max: 800 },
-    far: { min: -2, max: 400 },
-    ultra: { min: -1, max: 100 },
-    horizon: { min: -1, max: 25 }
+    near: { min: -10, max: 1500 },
+    mid: { min: -5, max: 1500 },
+    far: { min: -2, max: 1500 },
+    ultra: { min: -1, max: 1500 },
+    horizon: { min: -1, max: 1500 }
 };
 const FRUSTUM_MARGIN = CHUNK_SIZE;
 

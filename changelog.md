@@ -7,6 +7,45 @@
 > - Bugs: problem → cause → fix. Features: show the key before/after.
 > - `---` between entries.
 
+## **02/06/2026 — Frustum Culling: Steep Mountain Chunks Culled On-Screen**
+
+**What changed:** Far/ultra/horizon LOD height ranges still assumed the old quantized heights (max 400/100/25m). After precision-height removal, all LODs render full terrain (up to ~1500m on peaks), but the frustum test used tight per-LOD ranges — a distant mountain chunk at 800m+ had its bounding box max at 400m (far) or 100m (ultra), so the frustum test failed and the chunk was hidden while clearly on screen.
+
+**Fix:** All LOD height ranges widened to cover full terrain height (1500m). No per-chunk computation needed — just a constant change.
+
+```js
+// before: per-LOD ranges from the quantization era
+near:  { min: -10, max: 1000 },
+mid:   { min: -5,  max: 800 },
+far:   { min: -2,  max: 400 },
+ultra: { min: -1,  max: 100 },
+horizon: { min: -1, max: 25 },
+
+// after: all LODs cover full terrain height
+near:  { min: -10, max: 1500 },
+mid:   { min: -5,  max: 1500 },
+far:   { min: -2,  max: 1500 },
+ultra: { min: -1,  max: 1500 },
+horizon: { min: -1, max: 1500 },
+```
+
+---
+
+## **02/06/2026 — Landing Condition Readout (Debug Scaffolding)**
+
+**What changed:** Landings were extremely difficult, and both me and my friend kept crashing for two hours straight tryna land the damn plane, but failed. So to investigate: added a `READY TO LAND ✓` / `NO LAND ...` indicator in the debug panel that shows exactly which crash conditions are failing (PITCH, BANK, V/S, SPD). Exposes `pitchOk`, `bankOk`, `descOk`, `speedOk`, and `canLand` on `flightState` so the reason for any failed landing is visible in real-time.
+
+```js
+// Landing indicator shown between Flight Path and AoA
+${flight.canLand ? 'READY TO LAND ✓' : 'NO LAND' +
+  (!flight.pitchOk ? ' PITCH' : '') +
+  (!flight.bankOk ? ' BANK' : '') +
+  (!flight.descOk ? ' V/S' : '') +
+  (!flight.speedOk ? ' SPD' : '')}
+```
+
+---
+
 ## **02/06/2026 — Lowland Rolling Hills (Smooth Landable Terrain)**
 
 **What changed:** Lowlands were a bumpy mess of high-frequency noise (±6m over 50–150m periods) — impossible to land on. Replaced with two changes:

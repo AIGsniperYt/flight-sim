@@ -548,6 +548,12 @@ function updateDebug(dt) {
             Vertical Speed: ${fmt(flight.verticalSpeed, 2)} m/s<br>
             Pitch / Bank: ${fmtDeg(flight.pitch)} deg / ${fmtDeg(flight.bank)} deg<br>
             Flight Path: ${fmtDeg(flight.flightPathAngle)} deg<br>
+            ${flight.canLand ? '<span style="color:#44ff44;font-weight:bold">READY TO LAND ✓</span>' : '<span style="color:#ff4444">NO LAND' +
+            (!flight.pitchOk ? ' PITCH' : '') +
+            (!flight.bankOk ? ' BANK' : '') +
+            (!flight.descOk ? ' V/S' : '') +
+            (!flight.speedOk ? ' SPD' : '') +
+            '</span>'}<br>
             AoA: ${fmtDeg(flight.aoa)} deg${flight.stalled ? ' STALL' : ''}<br>
             Sideslip beta: ${fmtDeg(flight.sideslip)} deg<br>
             Throttle: ${Math.round(flight.throttle * 100)}% &nbsp; ${flight.airbrakes ? 'AIRBRAKE' : ''}<br>
