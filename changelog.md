@@ -7,6 +7,54 @@
 > - Bugs: problem → cause → fix. Features: show the key before/after.
 > - `---` between entries.
 
+## **02/06/2026 — Artificial Horizon: Full Wraparound Pitch Tape**
+
+**What changed:** The artificial horizon used to max out at ±30° visually: the ladder only had `10/20/30` marks and the pitch translation clamped at ±95px, so loops and steep climbs gave you no extra information once you went past the small normal-flight range. Rebuilt it as a cyclic 360° pitch tape so the sky/ground band wraps back around on itself through vertical, inverted, and back upright again.
+
+1. **Full come-around ladder** — pitch marks now repeat across multiple 360° cycles, with larger 0/90/180 cardinal references and readable 30° labels. The gradient itself repeats too, so the horizon line always has matching sky/ground context.
+
+```js
+// before: fixed narrow ladder
+[-30, -20, -10, 10, 20, 30].forEach((pitchMark) => {
+    mark.style.top = `${200 - pitchMark * 3}px`;
+});
+
+// after: repeated 360-degree pitch tape
+for (let pitchMark = -720; pitchMark <= 720; pitchMark += 10) {
+    const cyclicPitch = ((pitchMark % PITCH_CYCLE_DEG) + PITCH_CYCLE_DEG) % PITCH_CYCLE_DEG;
+    mark.style.top = `${HORIZON_CENTER - pitchMark * PITCH_PX_PER_DEG}px`;
+}
+```
+
+2. **No more pitch end-stop** — removed the ±95px clamp. The instrument now derives a wrapped attitude angle from the plane quaternion, so pulling through vertical keeps moving smoothly instead of pinning the display.
+
+```js
+// before: clamps once pitch exceeds the visible range
+const pitchDeg = THREE.MathUtils.radToDeg(flight.pitch);
+const pitchOffset = THREE.MathUtils.clamp(pitchDeg * 3, -95, 95);
+
+// after: wraps continuously through the full loop
+const pitchDeg = THREE.MathUtils.radToDeg(Math.atan2(instrumentForward.y, instrumentUp.y));
+const wrappedPitchDeg = wrapSignedDegrees(pitchDeg);
+const pitchOffset = wrappedPitchDeg * PITCH_PX_PER_DEG;
+```
+
+3. **Readable numbers while inverted** — labels now counter-rotate against the horizon band, so flipping from sky to ground no longer turns the pitch numbers upside down.
+
+```js
+// horizon rolls with bank
+horizonBand.style.transform = `translateY(${pitchOffset}px) rotate(${-bankDeg}deg)`;
+
+// labels cancel that roll so text stays readable
+instrumentPitchLabels.forEach((label) => {
+    label.style.transform = `rotate(${bankDeg}deg)`;
+});
+```
+
+Also added a small bank reference ring and heading readout (`HDG`) to make the instrument useful when the aircraft is steep, inverted, or generally doing crimes against passenger comfort.
+
+---
+
 ## **02/06/2026 — Frustum Culling: Steep Mountain Chunks Culled On-Screen**
 
 **What changed:** Far/ultra/horizon LOD height ranges still assumed the old quantized heights (max 400/100/25m). After precision-height removal, all LODs render full terrain (up to ~1500m on peaks), but the frustum test used tight per-LOD ranges — a distant mountain chunk at 800m+ had its bounding box max at 400m (far) or 100m (ultra), so the frustum test failed and the chunk was hidden while clearly on screen.

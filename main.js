@@ -200,12 +200,28 @@ instrumentDiv.style.pointerEvents = 'none';
 document.body.appendChild(instrumentDiv);
 
 const horizonBand = document.createElement('div');
+const INSTRUMENT_SIZE = 220;
+const HORIZON_BAND_SIZE = 4600;
+const HORIZON_CENTER = HORIZON_BAND_SIZE / 2;
+const PITCH_PX_PER_DEG = 3;
+const PITCH_CYCLE_DEG = 360;
+const PITCH_CYCLE_PX = PITCH_CYCLE_DEG * PITCH_PX_PER_DEG;
 horizonBand.style.position = 'absolute';
-horizonBand.style.left = '-90px';
-horizonBand.style.top = '-90px';
-horizonBand.style.width = '400px';
-horizonBand.style.height = '400px';
-horizonBand.style.background = 'linear-gradient(to bottom, #4fa3ff 0%, #4fa3ff 49.4%, #ffffff 49.4%, #ffffff 50.6%, #8b5a2b 50.6%, #8b5a2b 100%)';
+horizonBand.style.left = `${(INSTRUMENT_SIZE - HORIZON_BAND_SIZE) / 2}px`;
+horizonBand.style.top = `${(INSTRUMENT_SIZE - HORIZON_BAND_SIZE) / 2}px`;
+horizonBand.style.width = `${HORIZON_BAND_SIZE}px`;
+horizonBand.style.height = `${HORIZON_BAND_SIZE}px`;
+horizonBand.style.background = [
+    'repeating-linear-gradient(',
+    'to bottom,',
+    '#ffffff 0px, #ffffff 3px,',
+    `#8b5a2b 3px, #8b5a2b ${PITCH_CYCLE_PX / 2 - 3}px,`,
+    `#ffffff ${PITCH_CYCLE_PX / 2 - 3}px, #ffffff ${PITCH_CYCLE_PX / 2 + 3}px,`,
+    `#4fa3ff ${PITCH_CYCLE_PX / 2 + 3}px, #4fa3ff ${PITCH_CYCLE_PX - 3}px,`,
+    `#ffffff ${PITCH_CYCLE_PX - 3}px, #ffffff ${PITCH_CYCLE_PX}px`,
+    ')'
+].join(' ');
+horizonBand.style.backgroundPositionY = `${HORIZON_CENTER % PITCH_CYCLE_PX}px`;
 horizonBand.style.transformOrigin = '50% 50%';
 instrumentDiv.appendChild(horizonBand);
 
@@ -221,32 +237,49 @@ pitchLadder.style.font = '11px monospace';
 pitchLadder.style.textShadow = '0 1px 2px #000';
 horizonBand.appendChild(pitchLadder);
 
-[-30, -20, -10, 10, 20, 30].forEach((pitchMark) => {
+const instrumentPitchLabels = [];
+
+for (let pitchMark = -720; pitchMark <= 720; pitchMark += 10) {
+    const cyclicPitch = ((pitchMark % PITCH_CYCLE_DEG) + PITCH_CYCLE_DEG) % PITCH_CYCLE_DEG;
+    const mirroredPitch = cyclicPitch > 180 ? PITCH_CYCLE_DEG - cyclicPitch : cyclicPitch;
+    const isCardinal = cyclicPitch % 90 === 0;
+    const isMajor = cyclicPitch % 30 === 0;
+    const isHorizon = cyclicPitch === 0 || cyclicPitch === 180;
     const mark = document.createElement('div');
     mark.style.position = 'absolute';
     mark.style.left = '50%';
-    mark.style.top = `${200 - pitchMark * 3}px`;
-    mark.style.width = '74px';
-    mark.style.height = '1px';
-    mark.style.background = 'rgba(255, 255, 255, 0.9)';
+    mark.style.top = `${HORIZON_CENTER - pitchMark * PITCH_PX_PER_DEG}px`;
+    mark.style.width = isHorizon ? '142px' : isCardinal ? '118px' : isMajor ? '92px' : '54px';
+    mark.style.height = isHorizon ? '3px' : isMajor ? '2px' : '1px';
+    mark.style.background = isHorizon ? 'rgba(255, 255, 255, 0.98)' : 'rgba(255, 255, 255, 0.88)';
     mark.style.transform = 'translateX(-50%)';
 
-    const labelLeft = document.createElement('span');
-    labelLeft.textContent = `${Math.abs(pitchMark)}`;
-    labelLeft.style.position = 'absolute';
-    labelLeft.style.left = '-26px';
-    labelLeft.style.top = '-6px';
+    if (isMajor) {
+        const labelText = isHorizon ? `${cyclicPitch}` : `${mirroredPitch}`;
+        const labelLeft = document.createElement('span');
+        labelLeft.textContent = labelText;
+        labelLeft.style.position = 'absolute';
+        labelLeft.style.left = '-34px';
+        labelLeft.style.top = '-7px';
+        labelLeft.style.minWidth = '24px';
+        labelLeft.style.textAlign = 'right';
+        labelLeft.style.transformOrigin = '50% 50%';
 
-    const labelRight = document.createElement('span');
-    labelRight.textContent = `${Math.abs(pitchMark)}`;
-    labelRight.style.position = 'absolute';
-    labelRight.style.right = '-26px';
-    labelRight.style.top = '-6px';
+        const labelRight = document.createElement('span');
+        labelRight.textContent = labelText;
+        labelRight.style.position = 'absolute';
+        labelRight.style.right = '-34px';
+        labelRight.style.top = '-7px';
+        labelRight.style.minWidth = '24px';
+        labelRight.style.textAlign = 'left';
+        labelRight.style.transformOrigin = '50% 50%';
 
-    mark.appendChild(labelLeft);
-    mark.appendChild(labelRight);
+        mark.appendChild(labelLeft);
+        mark.appendChild(labelRight);
+        instrumentPitchLabels.push(labelLeft, labelRight);
+    }
     pitchLadder.appendChild(mark);
-});
+}
 
 const aircraftSymbol = document.createElement('div');
 aircraftSymbol.style.position = 'absolute';
@@ -272,6 +305,20 @@ aircraftDot.style.borderRadius = '50%';
 aircraftDot.style.transform = 'translate(-50%, -50%)';
 aircraftDot.style.zIndex = '3';
 instrumentDiv.appendChild(aircraftDot);
+
+[-90, -60, -45, -30, -20, -10, 10, 20, 30, 45, 60, 90].forEach((bankMark) => {
+    const tick = document.createElement('div');
+    tick.style.position = 'absolute';
+    tick.style.left = '50%';
+    tick.style.top = '12px';
+    tick.style.width = bankMark % 30 === 0 ? '2px' : '1px';
+    tick.style.height = Math.abs(bankMark) === 45 || Math.abs(bankMark) === 90 ? '13px' : '9px';
+    tick.style.background = 'rgba(255, 255, 255, 0.82)';
+    tick.style.transformOrigin = `50% ${INSTRUMENT_SIZE / 2 - 12}px`;
+    tick.style.transform = `translateX(-50%) rotate(${bankMark}deg)`;
+    tick.style.zIndex = '3';
+    instrumentDiv.appendChild(tick);
+});
 
 const bankPointer = document.createElement('div');
 bankPointer.style.position = 'absolute';
@@ -585,17 +632,37 @@ function updateDebug(dt) {
     }
 }
 
+const instrumentForward = new THREE.Vector3();
+const instrumentUp = new THREE.Vector3();
+
+function wrapDegrees(deg) {
+    return ((deg % 360) + 360) % 360;
+}
+
+function wrapSignedDegrees(deg) {
+    const wrapped = wrapDegrees(deg + 180) - 180;
+    return wrapped === -180 ? 180 : wrapped;
+}
+
 function updateFlightInstrument() {
     if (!flightInstrumentVisible) return;
 
     const plane = getPlane();
     const flight = getFlightState();
-    const pitchDeg = THREE.MathUtils.radToDeg(flight.pitch);
+    instrumentForward.set(0, 0, -1).applyQuaternion(plane.quaternion).normalize();
+    instrumentUp.set(0, 1, 0).applyQuaternion(plane.quaternion).normalize();
+
+    const pitchDeg = THREE.MathUtils.radToDeg(Math.atan2(instrumentForward.y, instrumentUp.y));
+    const wrappedPitchDeg = wrapSignedDegrees(pitchDeg);
     const bankDeg = THREE.MathUtils.radToDeg(flight.bank);
-    const pitchOffset = THREE.MathUtils.clamp(pitchDeg * 3, -95, 95);
+    const headingDeg = wrapDegrees(THREE.MathUtils.radToDeg(Math.atan2(instrumentForward.x, -instrumentForward.z)));
+    const pitchOffset = wrapSignedDegrees(wrappedPitchDeg) * PITCH_PX_PER_DEG;
 
     horizonBand.style.transform = `translateY(${pitchOffset}px) rotate(${-bankDeg}deg)`;
-    instrumentReadout.innerHTML = `ALT ${fmt(plane.position.y, 0)} m&nbsp;&nbsp; P ${fmt(pitchDeg, 0)}&deg;&nbsp;&nbsp; B ${fmt(bankDeg, 0)}&deg;`;
+    instrumentPitchLabels.forEach((label) => {
+        label.style.transform = `rotate(${bankDeg}deg)`;
+    });
+    instrumentReadout.innerHTML = `ALT ${fmt(plane.position.y, 0)} m&nbsp;&nbsp; HDG ${fmt(headingDeg, 0)}&deg;<br>P ${fmt(wrappedPitchDeg, 0)}&deg;&nbsp;&nbsp; B ${fmt(bankDeg, 0)}&deg;`;
 }
 
 let _stallStart = 0;
