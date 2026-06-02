@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { updateChunks, getChunkStats, toggleGapMode, getShowGaps, toggleWireframe, getWireframe } from './src/world.js';
-import { getTerrainColorAt, getTerrainStats } from './src/terrain.js';
+import { getTerrainColorAt, getTerrainStats, getHeightScaled } from './src/terrain.js';
 import {
     initPhysics,
     updatePlane,
@@ -543,7 +543,7 @@ function updateDebug(dt) {
             Plane: (${plane.position.x.toFixed(1)}, ${plane.position.y.toFixed(1)}, ${plane.position.z.toFixed(1)})<br>
             <br>
             <b>Flight State</b><br>
-            Altitude: ${fmt(plane.position.y, 1)} m (${fmt(plane.position.y * 3.28084, 0)} ft)<br>
+            Altitude: ${fmt(plane.position.y, 1)} m &nbsp; AGL ${fmt(plane.position.y - getHeightScaled(plane.position.x, plane.position.z, 1.0), 1)} m (${fmt(plane.position.y * 3.28084, 0)} ft)<br>
             Airspeed: ${fmt(flight.speed, 1)} m/s (${fmt(flight.speed * 3.6, 0)} km/h)<br>
             Vertical Speed: ${fmt(flight.verticalSpeed, 2)} m/s<br>
             Pitch / Bank: ${fmtDeg(flight.pitch)} deg / ${fmtDeg(flight.bank)} deg<br>

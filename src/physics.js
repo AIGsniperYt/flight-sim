@@ -231,6 +231,8 @@ function resetAircraftState() {
     plane.visible = true;
     throttle = AIRCRAFT.initialThrottle ?? 1.0;
     plane.position.set(0, AIRCRAFT.initialAltitude, 0);
+    const terrainY = getHeightScaled(plane.position.x, plane.position.z, 1.0);
+    plane.position.y = Math.max(plane.position.y, terrainY + 20);
     plane.rotation.set(AIRCRAFT.initialPitch, 0, 0);
     velocity.set(0, 0, -AIRCRAFT.initialSpeed);
     acceleration.set(0, 0, 0);

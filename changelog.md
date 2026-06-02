@@ -1,11 +1,41 @@
 # Changelog
 
+## **02/06/2026 — AGL Altitude Display + Aircraft Switch Crash Fix**
+
+**What changed:** Two fixes:
+
+1. **AGL altitude in debug stats** — The debug panel showed only absolute altitude (`plane.position.y`), making flat-looking 70m terrain appear as 70m of clearance. Added an AGL (Above Ground Level) reading via `getHeightScaled()`.
+
+```js
+// before: only absolute altitude
+Altitude: ${fmt(plane.position.y, 1)} m
+
+// after: absolute + AGL
+Altitude: ${fmt(plane.position.y, 1)} m &nbsp; AGL ${fmt(plane.position.y - getHeightScaled(plane.position.x, plane.position.z, 1.0), 1)} m
+```
+
+2. **Aircraft switch no longer spawns underground** — Switching from F-16 to Cessna 172 mid-flight (P key) teleported the plane to `(0, 120, 0)` without checking terrain height. If the terrain at the origin exceeded 120m, the plane spawned underground and crashed instantly.
+
+```js
+// before: fixed spawn altitude, no terrain check
+plane.position.set(0, AIRCRAFT.initialAltitude, 0);
+
+// after: clamped above terrain
+plane.position.set(0, AIRCRAFT.initialAltitude, 0);
+const terrainY = getHeightScaled(plane.position.x, plane.position.z, 1.0);
+plane.position.y = Math.max(plane.position.y, terrainY + 20);
+```
+
+---
+
 ## **29/05/2026 — Housekeeping: .md docs refactored into `docs/`, devlog tracker created**
 
 **What changed:** The root directory was accumulating standalone `.md` files. All documentation (bug analysis, physics notes, specs, reports, solutions, terrain docs, performance comparisons) now lives under `docs/`. Root keeps only `README.md`, `changelog.md`, `benchmark.md`, `devlogs.md`, and `LICENSE`.
 
 - Created `devlogs.md` — a commit-by-commit tracker with coverage status and notes, organised by theme (Optimisation, Physics, Terrain, etc.), ready for devlog planning.
 - All cross-references in `changelog.md` updated to point to the new `docs/` paths.
+
+---
 
 ## **30/05/2026 — Freecam Mode (C key)**
 
