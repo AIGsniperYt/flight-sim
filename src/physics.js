@@ -536,7 +536,7 @@ export function updatePlane(dt) {
             if (_collisionsEnabled) {
                 const craftPitch = Math.asin(THREE.MathUtils.clamp(forward.y, -1, 1));
                 const craftBank = Math.atan2(right.y, up.y);
-                const isLevel = Math.abs(craftPitch) <= deg(15) && Math.abs(craftBank) <= deg(15);
+                const isLevel = Math.abs(craftPitch) <= deg(25) && Math.abs(craftBank) <= deg(25);
                 const hardDesc = velocity.y < -30;
                 const overspeed = impactSpeed >= AIRCRAFT.crashSpeed;
                 if (!isLevel || hardDesc || overspeed) {
