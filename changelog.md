@@ -1,5 +1,37 @@
 # Changelog
 
+> **Style:**
+> - `## **DD/MM/YYYY — Title**` — bold header, em-dash separator. Newest entry at top.
+> - `**What changed:**` — lead with a short summary. Numbered list with bold items for multi-part changes.
+> - **Show code, not line numbers** — use `// before` / `// after` blocks for every change. This is the main format. Keep snippets short and focused.
+> - Bugs: problem → cause → fix. Features: show the key before/after.
+> - `---` between entries.
+
+## **02/06/2026 — Lowland Rolling Hills (Smooth Landable Terrain)**
+
+**What changed:** Lowlands were a bumpy mess of high-frequency noise (±6m over 50–150m periods) — impossible to land on. Replaced with two changes:
+
+1. **Suppressed high-frequency noise in lowlands** — base and hill octaves scaled to 2% amplitude below profile 40m, so the tight bumpiness vanishes.
+
+2. **Added broad rolling hill layer** — a low-frequency noise octave (scale 0.003, period ~670m, ±8m amplitude) creates gentle swells only in lowlands, fading out as elevation rises. These roll smoothly enough to land on, with lakes naturally filling the depressions below 8m.
+
+```js
+// before: tight bumpy noise at all elevations
+float base = snoise(warpPos * baseScale) * heightScale * flatnessFactor;
+float hill = snoise(warpPos * hillScale) * heightScale * hillHeightMultiplier;
+float preDetail = profile + base + hill + mountain;
+
+// after: suppressed high-freq + broad rolling hills in lowlands
+float elevationSmooth = min(1.0, profile / 40.0);
+float lowlandSmooth = 0.02 + 0.98 * elevationSmooth;
+float base = snoise(warpPos * baseScale) * heightScale * flatnessFactor * lowlandSmooth;
+float hill = snoise(warpPos * hillScale) * heightScale * hillHeightMultiplier * lowlandSmooth;
+float rollingHill = snoise(warpPos * 0.003) * 8.0 * (1.0 - elevationSmooth);
+float preDetail = profile + base + hill + mountain + rollingHill;
+```
+
+---
+
 ## **02/06/2026 — AGL Altitude Display + Aircraft Switch Crash Fix**
 
 **What changed:** Two fixes:

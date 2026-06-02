@@ -75,8 +75,10 @@ float computeHeight(float wx, float wz, float baseScale, float hillScale, float 
     float warpZ = snoise(pos * warpScale + vec2(5.2, 1.3)) * 100.0;
     vec2 warpPos = pos + vec2(warpX, warpZ);
     
-    float base = snoise(warpPos * baseScale) * heightScale * flatnessFactor;
-    float hill = snoise(warpPos * hillScale) * heightScale * hillHeightMultiplier;
+    float elevationSmooth = min(1.0, profile / 40.0);
+    float lowlandSmooth = 0.02 + 0.98 * elevationSmooth;
+    float base = snoise(warpPos * baseScale) * heightScale * flatnessFactor * lowlandSmooth;
+    float hill = snoise(warpPos * hillScale) * heightScale * hillHeightMultiplier * lowlandSmooth;
 
     float mountainRegion = snoise(pos * 0.0005);
     float continentCheck = snoise(pos * continentScale) * heightScale * 2.0;
@@ -111,7 +113,8 @@ float computeHeight(float wx, float wz, float baseScale, float hillScale, float 
     float mountainDetail = rockyDetail * smoothstep(10.0, 200.0, mountainBase) + peakJaggedness * peakMask;
     float mountain = mountainBase + mountainDetail;
 
-    float preDetail = profile + base + hill + mountain;
+    float rollingHill = snoise(warpPos * 0.003) * 8.0 * (1.0 - elevationSmooth);
+    float preDetail = profile + base + hill + mountain + rollingHill;
     float elevationFactor = clamp(preDetail / (heightScale * 6.0), 0.0, 1.0);
     float detail = snoise(warpPos * 0.3) * 1.0 * elevationFactor;
 
