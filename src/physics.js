@@ -12,9 +12,16 @@ const acceleration = new THREE.Vector3();
 const AIR_DENSITY_SEA_LEVEL = 1.225;
 const DENSITY_SCALE_HEIGHT = 8500;
 const GRAVITY = 9.81;
+const WORLD_UP = new THREE.Vector3(0, 1, 0);
 
 const deg = THREE.MathUtils.degToRad;
 const AIRBRAKE_AREA = 2.0;
+const AERO_FEEL = {
+    turnDragStrength: 0.6,
+    misalignmentStrength: 2.5,
+    gDragStrength: 0.4,
+    alignmentRate: 2.0
+};
 
 const DEFAULT_CONTROLS = {
     pitchSpeed: deg(55),
@@ -112,7 +119,9 @@ const up = new THREE.Vector3();
 const right = new THREE.Vector3();
 const velDir = new THREE.Vector3();
 const localVelocity = new THREE.Vector3();
+const desiredVelocity = new THREE.Vector3();
 const liftDir = new THREE.Vector3();
+const lateralLift = new THREE.Vector3();
 const lift = new THREE.Vector3();
 const drag = new THREE.Vector3();
 const thrust = new THREE.Vector3();
@@ -187,6 +196,7 @@ const flightState = {
     acceleration: { x: 0, y: 0, z: 0 },
     totalForce: { x: 0, y: 0, z: 0 },
     airbrakes: false, airbrakeDrag: 0,
+    airflowDrag: 0, turnDrag: 0, misalignmentDrag: 0, gDrag: 0,
     formulas: { lift: '', drag: '', thrust: '', weight: '', sideForce: '', acceleration: '' },
     constants: { key: '', name: '', mass: 0, wingArea: 0, wingSpan: 0, aspectRatio: 0, clMax: 0, stallAoA: 0, zeroLiftAoA: 0, inducedDragFactor: 0, maxThrust: 0 },
     stalled: false,
@@ -348,7 +358,9 @@ function getLiftCoefficient(aoa) {
 function getDragBreakdown(cl, aoa) {
     const parasiteCd = AIRCRAFT.parasiteDrag;
     const inducedCd = aircraftMetrics.inducedDragFactor * cl * cl;
-    const highAoACd = AIRCRAFT.highAoADrag * Math.sin(aoa) * Math.sin(aoa);
+    const highAoACd = AIRCRAFT.highAoADrag
+        * Math.pow(Math.sin(aoa), 2)
+        * (1 + 4 * Math.abs(aoa));
 
     return {
         parasiteCd,
@@ -516,6 +528,20 @@ export function updatePlane(dt) {
 
     lift.copy(liftDir).multiplyScalar(liftForce);
     drag.copy(velDir).multiplyScalar(-(dragForce + airbrakeDrag));
+
+    const turnRate = angVel.length();
+    const turnDrag = turnRate * speed * AERO_FEEL.turnDragStrength;
+    const alignment = THREE.MathUtils.clamp(forward.dot(velDir), -1, 1);
+    const misalignment = 1 - alignment;
+    const misalignmentDrag = misalignment * speed * AERO_FEEL.misalignmentStrength;
+
+    lateralLift.copy(lift).projectOnPlane(WORLD_UP);
+    const lateralAccel = lateralLift.length() / AIRCRAFT.mass;
+    const gLoad = lateralAccel / GRAVITY;
+    const gDrag = gLoad * speed * AERO_FEEL.gDragStrength;
+    const airflowDrag = turnDrag + misalignmentDrag + gDrag;
+    drag.addScaledVector(velDir, -airflowDrag);
+
     thrust.copy(forward).multiplyScalar(thrustForce);
     sideForce.copy(right).multiplyScalar(sideForceMag);
     weight.set(0, -weightForce, 0);
@@ -529,6 +555,11 @@ export function updatePlane(dt) {
     acceleration.copy(totalForce).divideScalar(AIRCRAFT.mass);
 
     velocity.addScaledVector(acceleration, dt);
+    const postAccelerationSpeed = velocity.length();
+    if (postAccelerationSpeed > 0.001) {
+        desiredVelocity.copy(forward).multiplyScalar(postAccelerationSpeed);
+        velocity.lerp(desiredVelocity, Math.min(1, dt * AERO_FEEL.alignmentRate));
+    }
     plane.position.addScaledVector(velocity, dt);
 
     if (!_crashed) {
@@ -587,21 +618,25 @@ export function updatePlane(dt) {
     flightState.highAoACd = dragBreakdown.highAoACd;
     flightState.sideCoefficient = sideCoefficient;
     flightState.lift = liftForce;
-    flightState.drag = dragForce;
+    flightState.drag = dragForce + airbrakeDrag + airflowDrag;
     flightState.thrust = thrustForce;
     flightState.weight = weightForce;
     flightState.sideForce = sideForceMag;
     flightState.liftToWeight = weightForce > 0 ? liftForce / weightForce : 0;
-    flightState.thrustToDrag = dragForce > 0 ? thrustForce / dragForce : 0;
+    flightState.thrustToDrag = flightState.drag > 0 ? thrustForce / flightState.drag : 0;
     flightState.stallSpeed = Math.sqrt((2 * weightForce) / (rho * AIRCRAFT.wingArea * AIRCRAFT.clMax));
     flightState.stalled = liftCoefficient.stalled;
     flightState.airbrakes = airbrakeOn;
     flightState.airbrakeDrag = airbrakeDrag;
+    flightState.airflowDrag = airflowDrag;
+    flightState.turnDrag = turnDrag;
+    flightState.misalignmentDrag = misalignmentDrag;
+    flightState.gDrag = gDrag;
     writeVector(flightState.localVelocity, localVelocity);
     writeVector(flightState.acceleration, acceleration);
     writeVector(flightState.totalForce, totalForce);
     flightState.formulas.lift = `L = q*S*CL = ${dynamicPressure.toFixed(1)}*${AIRCRAFT.wingArea.toFixed(1)}*${liftCoefficient.cl.toFixed(3)} = ${liftForce.toFixed(1)} N`;
-    flightState.formulas.drag = `D = q*S*CD = ${dynamicPressure.toFixed(1)}*${AIRCRAFT.wingArea.toFixed(1)}*${dragBreakdown.cd.toFixed(3)} = ${dragForce.toFixed(1)} N${airbrakeOn ? ` + airbrake ${airbrakeDrag.toFixed(1)} N` : ''}`;
+    flightState.formulas.drag = `D = q*S*CD = ${dynamicPressure.toFixed(1)}*${AIRCRAFT.wingArea.toFixed(1)}*${dragBreakdown.cd.toFixed(3)} = ${dragForce.toFixed(1)} N${airbrakeOn ? ` + airbrake ${airbrakeDrag.toFixed(1)} N` : ''}${airflowDrag > 0 ? ` + airflow ${airflowDrag.toFixed(1)} N (turn ${turnDrag.toFixed(1)}, align ${misalignmentDrag.toFixed(1)}, G ${gDrag.toFixed(1)})` : ''}`;
     flightState.formulas.thrust = `T = throttle*Tmax = ${throttle.toFixed(2)}*${AIRCRAFT.maxThrust.toFixed(0)} = ${thrustForce.toFixed(1)} N`;
     flightState.formulas.weight = `W = m*g = ${AIRCRAFT.mass.toFixed(0)}*${GRAVITY.toFixed(2)} = ${weightForce.toFixed(1)} N`;
     flightState.formulas.sideForce = `Y = q*Sside*CY = ${dynamicPressure.toFixed(1)}*${AIRCRAFT.sideArea.toFixed(1)}*${sideCoefficient.toFixed(3)} = ${sideForceMag.toFixed(1)} N`;

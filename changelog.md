@@ -7,6 +7,53 @@
 > - Bugs: problem → cause → fix. Features: show the key before/after.
 > - `---` between entries.
 
+## **04/06/2026 — Airflow Resistance & Turn Feel Upgrade**
+
+**What changed:** The aircraft already had proper lift/drag/thrust/weight forces, but aggressive rotation could still feel too clean: yank the stick, rotate the nose, and the aircraft did not always feel like it was chewing through air. Added an airflow resistance layer on top of the existing model so tight turns, sideways velocity, and high-G banking bleed energy while the velocity vector eases toward the nose instead of snapping there for free.
+
+1. **Turn, misalignment, and G drag** — extra airflow drag now stacks onto the existing drag vector, always opposite `velDir`. Turn rate punishes hard rotation, nose/velocity misalignment punishes sliding, and lateral lift adds a high-G cost.
+
+```js
+// before: only coefficient drag and airbrakes pushed against velocity
+drag.copy(velDir).multiplyScalar(-(dragForce + airbrakeDrag));
+
+// after: airflow drag stacks on the same velocity axis
+const turnDrag = turnRate * speed * AERO_FEEL.turnDragStrength;
+const misalignmentDrag = misalignment * speed * AERO_FEEL.misalignmentStrength;
+const gDrag = gLoad * speed * AERO_FEEL.gDragStrength;
+drag.addScaledVector(velDir, -(turnDrag + misalignmentDrag + gDrag));
+```
+
+2. **High AoA drag bites harder** — flares and aggressive pitch now multiply high-AoA drag by the angle magnitude, so pulling hard at speed costs noticeably more energy.
+
+```js
+// before: high AoA drag rose with sin^2 only
+const highAoACd = AIRCRAFT.highAoADrag * Math.sin(aoa) * Math.sin(aoa);
+
+// after: high AoA drag gets stronger as AoA grows
+const highAoACd = AIRCRAFT.highAoADrag
+    * Math.pow(Math.sin(aoa), 2)
+    * (1 + 4 * Math.abs(aoa));
+```
+
+3. **Velocity alignment lag** — after force integration, velocity now blends toward the aircraft's forward axis at a controlled rate. The plane can still carve into turns, but the movement vector has inertia and the blend itself bleeds energy when nose and velocity disagree.
+
+```js
+// before: integrate velocity, then move immediately
+velocity.addScaledVector(acceleration, dt);
+plane.position.addScaledVector(velocity, dt);
+
+// after: integrate, then let velocity gradually bite toward the nose
+velocity.addScaledVector(acceleration, dt);
+desiredVelocity.copy(forward).multiplyScalar(postAccelerationSpeed);
+velocity.lerp(desiredVelocity, Math.min(1, dt * AERO_FEEL.alignmentRate));
+plane.position.addScaledVector(velocity, dt);
+```
+
+Debug state now also exposes `airflowDrag`, `turnDrag`, `misalignmentDrag`, and `gDrag`, and the drag formula log includes the airflow breakdown so the new turn-feel costs are visible while tuning.
+
+---
+
 ## **02/06/2026 — Artificial Horizon: Full Wraparound Pitch Tape**
 
 **What changed:** The artificial horizon used to max out at ±30° visually: the ladder only had `10/20/30` marks and the pitch translation clamped at ±95px, so loops and steep climbs gave you no extra information once you went past the small normal-flight range. Rebuilt it as a cyclic 360° pitch tape so the sky/ground band wraps back around on itself through vertical, inverted, and back upright again.
