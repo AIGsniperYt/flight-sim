@@ -80,7 +80,7 @@ let debugArrowsVisible = true;
 let debugReferenceArrowsVisible = false;
 let gForceEffectEnabled = false;
 let flightInstrumentVisible = true;
-let minimapVisible = true;
+let minimapVisible = false;
 
 function applyDebugArrowVisibility() {
     setDebugVectorsVisible(debugVisible && debugArrowsVisible);

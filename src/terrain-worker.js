@@ -76,11 +76,6 @@ function snoise2D(x, y) {
     return 2.3 * (nx0 + (nx1 - nx0) * fadeY);
 }
 
-const tiles = new Map();
-let _cachedTileKey = null;
-let _cachedTile = null;
-let _tileHits = 0, _tileMisses = 0, _tilesGenerated = 0, _tileEvictions = 0;
-
 function ridgedNoise(x, y) {
     const n = 1.0 - Math.abs(snoise2D(x, y));
     return n * n;
@@ -97,6 +92,9 @@ function sigmoidStep(edge0, edge1, x) {
     const t = Math.max(-10, Math.min(10, (x - mid) * k));
     return 1.0 / (1.0 + Math.exp(-t));
 }
+
+const tiles = new Map();
+let _tilesGenerated = 0;
 
 function generateTile(tileX, tileZ) {
     const data = new Float32Array(TILE_SIZE * TILE_SIZE);
@@ -120,7 +118,7 @@ function generateTile(tileX, tileZ) {
             const warpZ = snoise2D(wx * warpScale + 5.2, wz * warpScale + 1.3) * 100.0;
             const wwx = wx + warpX;
             const wwz = wz + warpZ;
-            
+
             const elevationSmooth = Math.min(1.0, profile / 40.0);
             const lowlandSmooth = 0.02 + 0.98 * elevationSmooth;
             const base = snoise2D(wwx * baseScale, wwz * baseScale) * heightScale * flatnessFactor * lowlandSmooth;
@@ -141,7 +139,7 @@ function generateTile(tileX, tileZ) {
             const n3 = snoise2D(wwx * 0.009, wwz * 0.009) * 15.0;
             const n4 = ridgedNoise(wwx * 0.015, wwz * 0.015) * 10.0;
             const rockyDetail = n1 + n2 + n3 + n4;
-            
+
             const r1 = ridgedNoise(wwx * 0.002, wwz * 0.002) * 150.0;
             const r2 = ridgedNoise(wwx * 0.006, wwz * 0.006) * 60.0;
             const r3 = ridgedNoise(wwx * 0.015, wwz * 0.015) * 15.0;
@@ -173,25 +171,10 @@ function generateTile(tileX, tileZ) {
     return data;
 }
 
-// ---- worker mode (disabled by default, no background process) ----
-let _workerMode = false;
-let _worker = null;
-let _syncCache = null;
-
-const _SYNC_CACHE_MAX = 200;
-let _syncHits = 0, _syncMisses = 0, _syncGenFallback = 0;
-
-function _getHeightSync(worldX, worldZ) {
-    const tileX = Math.floor(worldX / TILE_SIZE);
-    const tileZ = Math.floor(worldZ / TILE_SIZE);
-    const ix = Math.floor(worldX - tileX * TILE_SIZE);
-    const iz = Math.floor(worldZ - tileZ * TILE_SIZE);
-
+function getTile(tileX, tileZ) {
     const key = `${tileX},${tileZ}`;
-    let tile = key === _cachedTileKey ? _cachedTile : tiles.get(key);
-
+    let tile = tiles.get(key);
     if (!tile) {
-        _tileMisses++;
         if (tiles.size >= MAX_TILES) {
             const toEvict = MAX_TILES >> 3;
             let evicted = 0;
@@ -200,115 +183,43 @@ function _getHeightSync(worldX, worldZ) {
                 tiles.delete(k);
                 evicted++;
             }
-            _tileEvictions += toEvict;
         }
         tile = generateTile(tileX, tileZ);
         _tilesGenerated++;
         tiles.set(key, tile);
-    } else if (key !== _cachedTileKey) {
-        _tileHits++;
+    } else {
         tiles.delete(key);
         tiles.set(key, tile);
-    } else {
-        _tileHits++;
     }
-
-    _cachedTileKey = key;
-    _cachedTile = tile;
-    return tile[iz * TILE_SIZE + ix];
+    return tile;
 }
 
-function _getHeightWorker(worldX, worldZ) {
+function getHeight(worldX, worldZ) {
     const tileX = Math.floor(worldX / TILE_SIZE);
     const tileZ = Math.floor(worldZ / TILE_SIZE);
     const ix = Math.floor(worldX - tileX * TILE_SIZE);
     const iz = Math.floor(worldZ - tileZ * TILE_SIZE);
-
-    const key = `${tileX},${tileZ}`;
-    let tile = _syncCache.get(key);
-    if (tile) {
-        _syncHits++;
-        return tile[iz * TILE_SIZE + ix];
-    }
-
-    _syncMisses++;
-    tile = generateTile(tileX, tileZ);
-    _syncGenFallback++;
-    _syncCache.set(key, tile);
-    while (_syncCache.size > _SYNC_CACHE_MAX) {
-        const firstKey = _syncCache.keys().next().value;
-        _syncCache.delete(firstKey);
-    }
-    if (_worker) {
-        _worker.postMessage({ type: 'getTile', tileX, tileZ });
-    }
+    const tile = getTile(tileX, tileZ);
     return tile[iz * TILE_SIZE + ix];
 }
 
-export function getHeight(worldX, worldZ) {
-    if (_workerMode) return _getHeightWorker(worldX, worldZ);
-    return _getHeightSync(worldX, worldZ);
-}
+const clampVal = (val, min, max) => Math.max(min, Math.min(max, val));
+const smoothstepVal = (edge0, edge1, x) => {
+    const t = clampVal((x - edge0) / (edge1 - edge0), 0.0, 1.0);
+    return t * t * (3.0 - 2.0 * t);
+};
+const mixColors = (c1, c2, t) => ({
+    r: c1.r + (c2.r - c1.r) * t,
+    g: c1.g + (c2.g - c1.g) * t,
+    b: c1.b + (c2.b - c1.b) * t
+});
+const addWeighted = (c1, w1, c2, w2, c3, w3) => ({
+    r: c1.r * w1 + c2.r * w2 + c3.r * w3,
+    g: c1.g * w1 + c2.g * w2 + c3.g * w3,
+    b: c1.b * w1 + c2.b * w2 + c3.b * w3
+});
 
-export function getHeightScaled(worldX, worldZ, lodScale = 1.0) {
-    return getHeight(worldX, worldZ);
-}
-
-export function enableWorker() {
-    if (_workerMode) return;
-    _workerMode = true;
-    _syncCache = new Map();
-    _syncHits = 0; _syncMisses = 0; _syncGenFallback = 0;
-    _worker = new Worker(new URL('./terrain-worker.js', import.meta.url), { type: 'module' });
-    _worker.onmessage = function(e) {
-        const msg = e.data;
-        switch (msg.type) {
-            case 'tileResult': {
-                const key = `${msg.tileX},${msg.tileZ}`;
-                const data = new Float32Array(msg.data);
-                _syncCache.set(key, data);
-                while (_syncCache.size > _SYNC_CACHE_MAX) {
-                    const firstKey = _syncCache.keys().next().value;
-                    _syncCache.delete(firstKey);
-                }
-                break;
-            }
-            case 'prefetchTiles': {
-                for (const tile of msg.tiles) {
-                    const key = `${tile.tileX},${tile.tileZ}`;
-                    const data = new Float32Array(tile.data);
-                    _syncCache.set(key, data);
-                }
-                while (_syncCache.size > _SYNC_CACHE_MAX) {
-                    const firstKey = _syncCache.keys().next().value;
-                    _syncCache.delete(firstKey);
-                }
-                break;
-            }
-        }
-    };
-}
-
-export function disableWorker() {
-    if (!_workerMode) return;
-    _workerMode = false;
-    if (_worker) {
-        _worker.terminate();
-        _worker = null;
-    }
-    _syncCache = null;
-}
-
-export function isWorkerEnabled() {
-    return _workerMode;
-}
-
-export function updatePrefetch(px, pz, radius) {
-    if (!_workerMode || !_worker) return;
-    _worker.postMessage({ type: 'prefetch', px, pz, radius: radius || 1500 });
-}
-
-export function getTerrainColorAt(worldX, worldZ) {
+function getTerrainColorAt(worldX, worldZ) {
     const h = getHeight(worldX, worldZ);
     const moisture = snoise2D(worldX * 0.002, worldZ * 0.002) * 0.5 + 0.5;
     const m = Math.max(0, Math.min(1, moisture));
@@ -322,24 +233,6 @@ export function getTerrainColorAt(worldX, worldZ) {
     const forest = { r: 0.227, g: 0.490, b: 0.204 };
     const tundra = { r: 0.541, g: 0.604, b: 0.541 };
     const snow = { r: 0.941, g: 0.941, b: 0.961 };
-
-    const clampVal = (val, min, max) => Math.max(min, Math.min(max, val));
-    const smoothstepVal = (edge0, edge1, x) => {
-        const t = clampVal((x - edge0) / (edge1 - edge0), 0.0, 1.0);
-        return t * t * (3.0 - 2.0 * t);
-    };
-
-    const mixColors = (c1, c2, t) => ({
-        r: c1.r + (c2.r - c1.r) * t,
-        g: c1.g + (c2.g - c1.g) * t,
-        b: c1.b + (c2.b - c1.b) * t
-    });
-
-    const addWeighted = (c1, w1, c2, w2, c3, w3) => ({
-        r: c1.r * w1 + c2.r * w2 + c3.r * w3,
-        g: c1.g * w1 + c2.g * w2 + c3.g * w3,
-        b: c1.b * w1 + c2.b * w2 + c3.b * w3
-    });
 
     const lowlandBlend = smoothstepVal(10.0, 30.0, h);
     const desertW = 1.0 - smoothstepVal(-0.4, -0.1, bf);
@@ -372,66 +265,105 @@ export function getTerrainColorAt(worldX, worldZ) {
     };
 }
 
-export function getTerrainStats() {
-    if (_workerMode) {
-        const stats = {
-            tiles: _syncCache.size,
-            tileHits: _syncHits,
-            tileMisses: _syncMisses,
-            tilesGenerated: _syncGenFallback,
-            tileEvictions: 0,
-            worker: true
-        };
-        _syncHits = 0;
-        _syncMisses = 0;
-        _syncGenFallback = 0;
-        return stats;
+function getTileStats() {
+    return { tiles: tiles.size, tilesGenerated: _tilesGenerated };
+}
+
+self.onmessage = function(e) {
+    const msg = e.data;
+
+    switch (msg.type) {
+        case 'getHeight':
+            const h = getHeight(msg.x, msg.z);
+            self.postMessage({ type: 'heightResult', id: msg.id, height: h });
+            break;
+
+        case 'getTile': {
+            const key = `${msg.tileX},${msg.tileZ}`;
+            let tile = tiles.get(key);
+            if (!tile) {
+                tile = getTile(msg.tileX, msg.tileZ);
+            }
+            const copy = new Float32Array(tile);
+            self.postMessage({
+                type: 'tileResult',
+                tileX: msg.tileX,
+                tileZ: msg.tileZ,
+                data: copy.buffer
+            }, [copy.buffer]);
+            break;
+        }
+
+        case 'getColor': {
+            const c = getTerrainColorAt(msg.x, msg.z);
+            self.postMessage({ type: 'colorResult', id: msg.id, r: c.r, g: c.g, b: c.b });
+            break;
+        }
+
+        case 'getMinimap': {
+            const { id, centerX, centerZ, width, height, step, halfMap } = msg;
+            const data = new Uint8ClampedArray(width * height * 4);
+            for (let y = 0; y < height; y++) {
+                for (let x = 0; x < width; x++) {
+                    const wx = centerX + x * step - halfMap;
+                    const wz = centerZ + y * step - halfMap;
+                    const c = getTerrainColorAt(wx, wz);
+                    const idx = (x + y * width) * 4;
+                    data[idx] = c.r;
+                    data[idx + 1] = c.g;
+                    data[idx + 2] = c.b;
+                    data[idx + 3] = 255;
+                }
+            }
+            self.postMessage({ type: 'minimapResult', id, data: data.buffer }, [data.buffer]);
+            break;
+        }
+
+        case 'prefetch': {
+            const { px, pz, radius } = msg;
+            const tileCX = Math.floor(px / TILE_SIZE);
+            const tileCZ = Math.floor(pz / TILE_SIZE);
+            const tileRadius = Math.ceil(radius / TILE_SIZE);
+            const generated = [];
+
+            for (let tx = tileCX - tileRadius; tx <= tileCX + tileRadius; tx++) {
+                for (let tz = tileCZ - tileRadius; tz <= tileCZ + tileRadius; tz++) {
+                    const key = `${tx},${tz}`;
+                    if (!tiles.has(key)) {
+                        if (tiles.size >= MAX_TILES) {
+                            const toEvict = MAX_TILES >> 3;
+                            let evicted = 0;
+                            for (const k of tiles.keys()) {
+                                if (evicted >= toEvict) break;
+                                tiles.delete(k);
+                                evicted++;
+                            }
+                        }
+                        const tile = generateTile(tx, tz);
+                        _tilesGenerated++;
+                        tiles.set(key, tile);
+                        generated.push({ tileX: tx, tileZ: tz, data: tile.buffer });
+                    }
+                }
+            }
+
+            if (generated.length > 0) {
+                const tileCopies = generated.map(g => ({
+                    tileX: g.tileX,
+                    tileZ: g.tileZ,
+                    data: new Float32Array(tiles.get(`${g.tileX},${g.tileZ}`)).buffer
+                }));
+                const transfers = tileCopies.map(g => g.data);
+                self.postMessage({ type: 'prefetchTiles', tiles: tileCopies, tileCount: tiles.size, tilesGenerated: _tilesGenerated }, transfers);
+            } else {
+                self.postMessage({ type: 'prefetchTiles', tiles: [], tileCount: tiles.size, tilesGenerated: _tilesGenerated });
+            }
+            break;
+        }
+
+        case 'clearCache':
+            tiles.clear();
+            _tilesGenerated = 0;
+            break;
     }
-    const stats = {
-        tiles: tiles.size,
-        tileHits: _tileHits,
-        tileMisses: _tileMisses,
-        tilesGenerated: _tilesGenerated,
-        tileEvictions: _tileEvictions,
-        worker: false
-    };
-    _tileHits = 0;
-    _tileMisses = 0;
-    return stats;
-}
-
-export function clearCache() {
-    tiles.clear();
-    _cachedTileKey = null;
-    _cachedTile = null;
-    if (_syncCache) _syncCache.clear();
-}
-
-export function getColorComponents(y) {
-    const dryGrass = { r: 0.604, g: 0.584, b: 0.353 };
-    const shrubland = { r: 0.478, g: 0.502, b: 0.196 };
-    const tundra = { r: 0.541, g: 0.604, b: 0.541 };
-    const snow = { r: 0.941, g: 0.941, b: 0.961 };
-
-    const clampVal = (val, min, max) => Math.max(min, Math.min(max, val));
-    const smoothstepVal = (edge0, edge1, x) => {
-        const t = clampVal((x - edge0) / (edge1 - edge0), 0.0, 1.0);
-        return t * t * (3.0 - 2.0 * t);
-    };
-
-    const mixColors = (c1, c2, t) => ({
-        r: c1.r + (c2.r - c1.r) * t,
-        g: c1.g + (c2.g - c1.g) * t,
-        b: c1.b + (c2.b - c1.b) * t
-    });
-
-    const t1 = smoothstepVal(80.0, 150.0, y);
-    const t2 = smoothstepVal(300.0, 500.0, y);
-    const t3 = smoothstepVal(500.0, 650.0, y);
-
-    let col = mixColors(dryGrass, shrubland, t1);
-    col = mixColors(col, tundra, t2);
-    col = mixColors(col, snow, t3);
-
-    return col;
-}
+};
