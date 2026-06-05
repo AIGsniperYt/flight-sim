@@ -20,7 +20,7 @@ const AERO_FEEL = {
     turnDragStrength: 0.6,
     misalignmentStrength: 2.5,
     gDragStrength: 0.4,
-    alignmentRate: 2.0
+    alignmentRate: 4.0
 };
 
 const DEFAULT_CONTROLS = {
@@ -29,7 +29,10 @@ const DEFAULT_CONTROLS = {
     yawSpeed: deg(45),
     angularDamping: 2.0,
     pitchStability: 0.35,
-    yawStability: 1.2
+    yawStability: 1.2,
+    pitchInertia: 1.2,
+    yawInertia: 1.5,
+    rollInertia: 0.8
 };
 
 function defineAircraft(config) {
@@ -87,13 +90,13 @@ export const AIRCRAFT_PRESETS = {
         clMin: -0.9,
         parasiteDrag: 0.021,
         oswaldEfficiency: 0.62,
-        sideForceSlope: 2.4,
+        sideForceSlope: 4.0,
         highAoADrag: 1.15,
         postStallFadeAngle: deg(45),
         controls: {
-            pitchSpeed: deg(95),
-            rollSpeed: deg(260),
-            yawSpeed: deg(70),
+            pitchSpeed: deg(140),
+            rollSpeed: deg(320),
+            yawSpeed: deg(90),
             angularDamping: 2.6,
             pitchStability: 0.22,
             yawStability: 1.6
@@ -120,6 +123,7 @@ const right = new THREE.Vector3();
 const velDir = new THREE.Vector3();
 const localVelocity = new THREE.Vector3();
 const desiredVelocity = new THREE.Vector3();
+const airflowError = new THREE.Vector3();
 const liftDir = new THREE.Vector3();
 const lateralLift = new THREE.Vector3();
 const lift = new THREE.Vector3();
@@ -468,21 +472,6 @@ export function updatePlane(dt) {
 
     throttle = THREE.MathUtils.clamp(throttle + throttleInput * dt, 0, 1);
 
-    const desiredPitch = pitchInput * controls.pitchSpeed;
-    const desiredRoll  = rollInput  * controls.rollSpeed;
-    const desiredYaw   = yawInput   * controls.yawSpeed;
-
-    const angBlend = Math.min(1, 8 * dt);
-    angVel.x += (desiredPitch - angVel.x) * angBlend;
-    angVel.y += (desiredYaw   - angVel.y) * angBlend;
-    angVel.z += (desiredRoll  - angVel.z) * angBlend;
-
-    angVel.multiplyScalar(Math.max(0, 1 - controls.angularDamping * dt));
-
-    plane.rotateX(angVel.x * dt);
-    plane.rotateY(angVel.y * dt);
-    plane.rotateZ(angVel.z * dt);
-
     forward.set(0, 0, -1).applyQuaternion(plane.quaternion).normalize();
     up.set(0, 1, 0).applyQuaternion(plane.quaternion).normalize();
     right.set(1, 0, 0).applyQuaternion(plane.quaternion).normalize();
@@ -494,20 +483,66 @@ export function updatePlane(dt) {
         velDir.copy(forward);
     }
 
+    const rho = getAirDensity(plane.position.y);
+    const dynamicPressure = 0.5 * rho * speed * speed;
+
     inverseQuaternion.copy(plane.quaternion).invert();
     localVelocity.copy(velocity).applyQuaternion(inverseQuaternion);
 
-    const forwardSpeed = -localVelocity.z;
-    const aoa = Math.atan2(-localVelocity.y, forwardSpeed);
-    const sideslip = Math.atan2(localVelocity.x, Math.max(0.001, forwardSpeed));
+    let forwardSpeed = -localVelocity.z;
+    let aoa = Math.atan2(-localVelocity.y, forwardSpeed);
+    let sideslip = Math.atan2(localVelocity.x, Math.max(0.001, forwardSpeed));
+
+    const authority = THREE.MathUtils.clamp(dynamicPressure / 5000, 0.15, 1.0);
+
+    let desiredPitch = pitchInput * controls.pitchSpeed * authority;
+    let desiredRoll  = rollInput  * controls.rollSpeed * authority;
+    let desiredYaw   = yawInput   * controls.yawSpeed * authority;
+
+    const angBlend = 8;
+    const pitchBlend = Math.min(1, angBlend * dt / Math.max(0.001, controls.pitchInertia));
+    const yawBlend = Math.min(1, angBlend * dt / Math.max(0.001, controls.yawInertia));
+    const rollBlend = Math.min(1, angBlend * dt / Math.max(0.001, controls.rollInertia));
+
+    angVel.x += (desiredPitch - angVel.x) * pitchBlend;
+    angVel.y += (desiredYaw   - angVel.y) * yawBlend;
+    angVel.z += (desiredRoll  - angVel.z) * rollBlend;
 
     if (speed > 5) {
         if (pitchInput === 0) angVel.x += -aoa * controls.pitchStability * dt;
         if (yawInput === 0) angVel.y += -sideslip * controls.yawStability * dt;
+
+        airflowError.copy(velDir).cross(forward).applyQuaternion(inverseQuaternion);
+        angVel.x -= airflowError.x * 0.15 * dt;
+        angVel.y -= airflowError.y * 0.3 * dt;
+        angVel.z -= airflowError.z * 0.1 * dt;
     }
 
-    const rho = getAirDensity(plane.position.y);
-    const dynamicPressure = 0.5 * rho * speed * speed;
+    const q = dynamicPressure;
+    const pitchDamping = q * 0.000001;
+    const yawDamping = q * 0.0000015;
+    const rollDamping = q * 0.000002;
+
+    angVel.x *= Math.max(0, 1 - pitchDamping * dt);
+    angVel.y *= Math.max(0, 1 - yawDamping * dt);
+    angVel.z *= Math.max(0, 1 - rollDamping * dt);
+    angVel.multiplyScalar(Math.max(0, 1 - controls.angularDamping * dt));
+
+    plane.rotateX(angVel.x * dt);
+    plane.rotateY(angVel.y * dt);
+    plane.rotateZ(angVel.z * dt);
+
+    forward.set(0, 0, -1).applyQuaternion(plane.quaternion).normalize();
+    up.set(0, 1, 0).applyQuaternion(plane.quaternion).normalize();
+    right.set(1, 0, 0).applyQuaternion(plane.quaternion).normalize();
+
+    inverseQuaternion.copy(plane.quaternion).invert();
+    localVelocity.copy(velocity).applyQuaternion(inverseQuaternion);
+
+    forwardSpeed = -localVelocity.z;
+    aoa = Math.atan2(-localVelocity.y, forwardSpeed);
+    sideslip = Math.atan2(localVelocity.x, Math.max(0.001, forwardSpeed));
+
     const liftCoefficient = getLiftCoefficient(aoa);
     const dragBreakdown = getDragBreakdown(liftCoefficient.cl, aoa);
     const liftForce = dynamicPressure * AIRCRAFT.wingArea * liftCoefficient.cl;
@@ -529,17 +564,12 @@ export function updatePlane(dt) {
     lift.copy(liftDir).multiplyScalar(liftForce);
     drag.copy(velDir).multiplyScalar(-(dragForce + airbrakeDrag));
 
-    const turnRate = angVel.length();
-    const turnDrag = turnRate * speed * AERO_FEEL.turnDragStrength;
-    const alignment = THREE.MathUtils.clamp(forward.dot(velDir), -1, 1);
-    const misalignment = 1 - alignment;
-    const misalignmentDrag = misalignment * speed * AERO_FEEL.misalignmentStrength;
-
-    lateralLift.copy(lift).projectOnPlane(WORLD_UP);
-    const lateralAccel = lateralLift.length() / AIRCRAFT.mass;
-    const gLoad = lateralAccel / GRAVITY;
-    const gDrag = gLoad * speed * AERO_FEEL.gDragStrength;
-    const airflowDrag = turnDrag + misalignmentDrag + gDrag;
+    const loadFactor = Math.abs(liftForce) / (AIRCRAFT.mass * GRAVITY);
+    const inducedTurnDrag = Math.max(0, loadFactor - 1) * dynamicPressure * 0.015;
+    const airflowDrag = inducedTurnDrag;
+    const turnDrag = inducedTurnDrag;
+    const misalignmentDrag = 0;
+    const gDrag = 0;
     drag.addScaledVector(velDir, -airflowDrag);
 
     thrust.copy(forward).multiplyScalar(thrustForce);

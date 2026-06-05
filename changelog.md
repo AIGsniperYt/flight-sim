@@ -7,6 +7,128 @@
 > - Bugs: problem → cause → fix. Features: show the key before/after.
 > - `---` between entries.
 
+
+## **05/06/2026 — Aerodynamic Control Authority & Flight Dynamics Overhaul**
+
+**What changed:** Six discrete changes to `src/physics.js`, all based on the committed version. Controls were fully static before — same rate regardless of speed or airflow. Turn energy loss was tied to rotation rate rather than lift force. The velocity vector had no aerodynamic coupling to the nose. All three are now fixed.
+
+1. **`alignmentRate` raised from 2.0 to 4.0** — The velocity-to-nose lerp was already present in the committed code but was too weak at `2.0`. At typical F-16 speeds the velocity vector lagged too far behind the nose, creating a floaty disconnected feel. `4.0` gives tight aerodynamic coupling: pull the nose up, the trajectory follows quickly, which is consistent with how a real fighter is dragged through the air by its own lift.
+
+```js
+// before
+alignmentRate: 2.0
+
+// after
+alignmentRate: 4.0
+```
+
+2. **Axis-specific control inertia added to `DEFAULT_CONTROLS`** — The committed code used a single `angBlend = Math.min(1, 8 * dt)` for all three axes. New `pitchInertia`, `yawInertia`, `rollInertia` fields allow each axis to have its own blend rate. The F-16 defaults inherit these and can be overridden per aircraft.
+
+```js
+// before: uniform blend, no per-axis inertia
+const angBlend = Math.min(1, 8 * dt);
+angVel.x += (desiredPitch - angVel.x) * angBlend;
+angVel.y += (desiredYaw   - angVel.y) * angBlend;
+angVel.z += (desiredRoll  - angVel.z) * angBlend;
+```
+
+```js
+// after: per-axis inertia-weighted blends
+const angBlend = 8;
+const pitchBlend = Math.min(1, angBlend * dt / Math.max(0.001, controls.pitchInertia));
+const yawBlend   = Math.min(1, angBlend * dt / Math.max(0.001, controls.yawInertia));
+const rollBlend  = Math.min(1, angBlend * dt / Math.max(0.001, controls.rollInertia));
+
+angVel.x += (desiredPitch - angVel.x) * pitchBlend;
+angVel.y += (desiredYaw   - angVel.y) * yawBlend;
+angVel.z += (desiredRoll  - angVel.z) * rollBlend;
+```
+
+3. **Dynamic control authority + pre-computed `dynamicPressure`** — The committed code applied `controls.pitchSpeed` etc. directly. Control inputs are now scaled by `authority` (clamped dynamic-pressure ratio), so controls have 15% effectiveness at stall speed and ramp to 100% at cruise. `rho` and `dynamicPressure` are now computed before the rotation block so they're available to scale controls, then reused for the aerodynamic force pass below.
+
+```js
+// before: static control rates, rho computed later
+const desiredPitch = pitchInput * controls.pitchSpeed;
+const desiredRoll  = rollInput  * controls.rollSpeed;
+const desiredYaw   = yawInput   * controls.yawSpeed;
+```
+
+```js
+// after: authority-scaled, dynamic pressure available early
+const rho = getAirDensity(plane.position.y);
+const dynamicPressure = 0.5 * rho * speed * speed;
+const authority = THREE.MathUtils.clamp(dynamicPressure / 5000, 0.15, 1.0);
+
+let desiredPitch = pitchInput * controls.pitchSpeed * authority;
+let desiredRoll  = rollInput  * controls.rollSpeed * authority;
+let desiredYaw   = yawInput   * controls.yawSpeed * authority;
+```
+
+4. **Airflow alignment torque added + dynamic-pressure angular damping** — The committed code had only AoA/sideslip stability corrections. Added a cross-product torque that nudges the nose toward the velocity vector (weak enough to allow sustained high-AoA, strong enough to prevent divergence), plus per-axis dynamic-pressure damping applied before `controls.angularDamping`. Rotation is now applied *after* these corrections so a second AoA/sideslip read using the updated orientation feeds the aerodynamic force pass.
+
+```js
+// before: only AoA/sideslip nudge, no cross-product torque, no q-damping
+if (speed > 5) {
+    if (pitchInput === 0) angVel.x += -aoa * controls.pitchStability * dt;
+    if (yawInput === 0) angVel.y += -sideslip * controls.yawStability * dt;
+}
+angVel.multiplyScalar(Math.max(0, 1 - controls.angularDamping * dt));
+plane.rotateX(angVel.x * dt); // rotation before force pass — stale AoA
+```
+
+```js
+// after: cross-product alignment + q-damping + rotation moved before force pass
+if (speed > 5) {
+    if (pitchInput === 0) angVel.x += -aoa * controls.pitchStability * dt;
+    if (yawInput === 0) angVel.y += -sideslip * controls.yawStability * dt;
+
+    airflowError.copy(velDir).cross(forward).applyQuaternion(inverseQuaternion);
+    angVel.x -= airflowError.x * 0.15 * dt;
+    angVel.y -= airflowError.y * 0.3  * dt;
+    angVel.z -= airflowError.z * 0.1  * dt;
+}
+
+const q = dynamicPressure;
+angVel.x *= Math.max(0, 1 - q * 0.000001  * dt);
+angVel.y *= Math.max(0, 1 - q * 0.0000015 * dt);
+angVel.z *= Math.max(0, 1 - q * 0.000002  * dt);
+angVel.multiplyScalar(Math.max(0, 1 - controls.angularDamping * dt));
+
+plane.rotateX(angVel.x * dt); // then AoA/sideslip re-read with fresh orientation
+```
+
+5. **Lift-induced turn drag replaces rotation-rate drag** — The committed `04/06/2026` model calculated `airflowDrag` from turn rate × speed, nose/velocity misalignment × speed, and lateral G-load × speed. These all penalised rotation itself rather than the G-load generating it. Replaced with a single load-factor formula: extra drag above 1G, proportional to dynamic pressure. A fast barrel roll (low G, high rotation) barely loses speed; a 9G sustained turn bleeds it quickly.
+
+```js
+// before: drag from turn rate, misalignment, and lateral G separately
+const turnDrag         = turnRate    * speed * AERO_FEEL.turnDragStrength;
+const misalignmentDrag = misalignment * speed * AERO_FEEL.misalignmentStrength;
+const gDrag            = gLoad       * speed * AERO_FEEL.gDragStrength;
+drag.addScaledVector(velDir, -(turnDrag + misalignmentDrag + gDrag));
+```
+
+```js
+// after: lift-induced drag only — energy cost comes from G, not rotation rate
+const loadFactor      = Math.abs(liftForce) / (AIRCRAFT.mass * GRAVITY);
+const inducedTurnDrag = Math.max(0, loadFactor - 1) * dynamicPressure * 0.015;
+drag.addScaledVector(velDir, -inducedTurnDrag);
+```
+
+6. **F-16 preset: control rates and side force slope updated** — `pitchSpeed` / `rollSpeed` / `yawSpeed` raised to match realistic F-16 control authority. `sideForceSlope` raised from `2.4` to `4.0` for more realistic lateral stability.
+
+```js
+// before
+sideForceSlope: 2.4,
+controls: { pitchSpeed: deg(95), rollSpeed: deg(260), yawSpeed: deg(70), ... }
+
+// after
+sideForceSlope: 4.0,
+controls: { pitchSpeed: deg(140), rollSpeed: deg(320), yawSpeed: deg(90), ... }
+```
+
+---
+
+
 ## **04/06/2026 — Airflow Resistance & Turn Feel Upgrade**
 
 **What changed:** The aircraft already had proper lift/drag/thrust/weight forces, but aggressive rotation could still feel too clean: yank the stick, rotate the nose, and the aircraft did not always feel like it was chewing through air. Added an airflow resistance layer on top of the existing model so tight turns, sideways velocity, and high-G banking bleed energy while the velocity vector eases toward the nose instead of snapping there for free.
