@@ -8,6 +8,65 @@
 > - `---` between entries.
 
 
+## **06/06/2026 — Web Worker Research; Terrain Worker (Disabled by Default); Minimap Removed**
+
+**What changed:** Four related outcomes from investigating Web Workers as a solution for main-thread lag.
+
+### 1. Web Worker viability research
+
+Workers are async math machines — they run JS on a separate OS thread, receive data via `postMessage()`, compute, send results back. No DOM, no Three.js, no canvas, no shared memory allowed, only pure maths. Every main-process in the animation loop was evaluated:
+
+| Process | Worker? | Reason |
+|---|---|---|
+| Terrain tile generation (`generateTile`) | **YES** | Pure math (50k noise calls/tile), no Three.js dependency. Only clean fit. |
+| Physics simulation (`updatePlane`) | No | Three.js Vector3/Quaternion/Mesh throughout. Message latency > computation time. |
+| Chunk geometry writes (`addChunkToBucket`) | No | Writes to `BufferGeometry.attributes.position.array` — Three.js internal. |
+| Chunk boundary scanning | Partial | Pure arithmetic, but geometry writes (the expensive half) can't leave main thread. |
+| Frustum culling | No | `THREE.Frustum.intersectsBox()` — Three.js objects everywhere. |
+| Minimap (36k sync lookups) | **No** | Tight sync loop can't await async messages. Stale data, priority inversion, message pileup. |
+| Debug overlay / instruments / UI | No | Direct DOM/CSS manipulation. |
+| GPU rendering | No | WebGL context required. |
+
+**Key finding:** Workers are a net win for batchable heavy compute (tile generation) but a net loss for tight sync loops (minimap) because:
+- **Sync/async mismatch** — animation loop is synchronous, workers return whenever
+- **Stale data** — minimap always shows where you *were*, not where you *are*
+- **No priority** — urgent `getTile` queues behind a minimap batch in FIFO worker
+- **No cancellation** — if aircraft moves during a minimap batch, the result is wasted
+
+### 2. Terrain worker implementation (`src/terrain-worker.js`, `src/terrain.js`)
+
+Created `src/terrain-worker.js` with the full Gustavson simplex noise stack, `generateTile()`, tile LRU cache, and minimap batch API. Modified `src/terrain.js` to support dual-mode operation — default is synchronous (no worker, zero background processes):
+
+```js
+// New exports (unused by default)
+enableWorker()    // lazily creates the worker
+disableWorker()   // terminates worker, returns to sync
+isWorkerEnabled() // check mode
+updatePrefetch()  // tells worker to pre-generate tiles around position
+```
+
+In worker mode, `getHeight()` checks a main-thread sync cache (populated by worker) first. On miss, falls back to inline synchronous generation + async worker request — correct value arrives next frame. The worker is never created unless `enableWorker()` is explicitly called.
+
+### 3. Minimap removed
+
+36,864 synchronous `getTerrainColorAt()` calls every 250ms (~10-15ms frame spikes). In a flight sim the terrain is already visible, just look down obviously. Besides, the minimap area was so small, it had no useful information, showing a small area of biome or maybe a mountain, nothing you can't see by just looking at the screen — the minimap added CPU cost for redundant information. Removed entirely:
+
+- DOM elements (`minimapContainer`, `minimapCanvas`, `minimapReadout`) — deleted
+- `drawMinimap()` — deleted  
+- `getTerrainColorAt` import — dropped from `main.js`
+- `minimapVisible`, `MINIMAP_*` constants — deleted
+- `KeyM` toggle handler — deleted
+- `terrain-worker.js` still has `getTerrainColorAt` internally for the batch minimap API (unused)
+
+### 4. Worker is *not* wired up — decision rationale
+
+With the minimap gone, `getHeight()` is called once per physics frame for collision detection. At 60fps with the existing 4000-tile LRU cache, the CPU cost of the occasional cache-miss tile generation (~2-8ms) is negligible. The worker would add message-passing latency, sync-cache complexity, and maintenance overhead — smoothing a spike that barely registers. The infrastructure is kept on disk (`enableWorker()`/`disableWorker()`/`updatePrefetch()` available) for future need, but is not wired into the startup path.
+
+### 5. Benchmarking ready
+
+Press `F8` to run the profiler (900 frames, sampled every 60). Output appears in console as CSV-like rows. Paste the full output to analyse frame-time breakdowns (chunk gen, physics, tile cache, memory).
+
+
 ## **05/06/2026 — Aerodynamic Control Authority & Flight Dynamics Overhaul**
 
 **What changed:** Six discrete changes to `src/physics.js`, all based on the committed version. Controls were fully static before — same rate regardless of speed or airflow. Turn energy loss was tied to rotation rate rather than lift force. The velocity vector had no aerodynamic coupling to the nose. All three are now fixed.

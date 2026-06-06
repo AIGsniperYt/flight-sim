@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { updateChunks, getChunkStats, toggleGapMode, getShowGaps, toggleWireframe, getWireframe } from './src/world.js';
-import { getTerrainColorAt, getTerrainStats, getHeightScaled } from './src/terrain.js';
+import { getTerrainStats, getHeightScaled } from './src/terrain.js';
 import {
     initPhysics,
     updatePlane,
@@ -80,7 +80,6 @@ let debugArrowsVisible = true;
 let debugReferenceArrowsVisible = false;
 let gForceEffectEnabled = false;
 let flightInstrumentVisible = true;
-let minimapVisible = false;
 
 function applyDebugArrowVisibility() {
     setDebugVectorsVisible(debugVisible && debugArrowsVisible);
@@ -345,39 +344,6 @@ instrumentReadout.style.textShadow = '0 1px 3px #000';
 instrumentReadout.style.zIndex = '4';
 instrumentDiv.appendChild(instrumentReadout);
 
-const minimapContainer = document.createElement('div');
-minimapContainer.style.position = 'fixed';
-minimapContainer.style.right = '18px';
-minimapContainer.style.top = '18px';
-minimapContainer.style.width = '220px';
-minimapContainer.style.height = '220px';
-minimapContainer.style.padding = '8px';
-minimapContainer.style.background = 'rgba(0, 0, 0, 0.72)';
-minimapContainer.style.border = '2px solid rgba(255, 255, 255, 0.85)';
-minimapContainer.style.borderRadius = '8px';
-minimapContainer.style.boxSizing = 'border-box';
-minimapContainer.style.zIndex = '9997';
-minimapContainer.style.pointerEvents = 'none';
-document.body.appendChild(minimapContainer);
-
-const minimapCanvas = document.createElement('canvas');
-minimapCanvas.width = 192;
-minimapCanvas.height = 192;
-minimapCanvas.style.width = '192px';
-minimapCanvas.style.height = '192px';
-minimapCanvas.style.display = 'block';
-minimapCanvas.style.imageRendering = 'pixelated';
-minimapCanvas.style.background = '#111';
-minimapContainer.appendChild(minimapCanvas);
-
-const minimapReadout = document.createElement('div');
-minimapReadout.style.color = '#fff';
-minimapReadout.style.font = '11px monospace';
-minimapReadout.style.marginTop = '4px';
-minimapReadout.style.textAlign = 'center';
-minimapReadout.style.textShadow = '0 1px 2px #000';
-minimapContainer.appendChild(minimapReadout);
-
 const stallWarning = document.createElement('div');
 stallWarning.innerHTML = `
   <div class="stall-kicker">AIRSPEED LOW</div>
@@ -448,23 +414,11 @@ Object.assign(gForceOverlay.style, {
 });
 document.body.appendChild(gForceOverlay);
 
-const minimapCtx = minimapCanvas.getContext('2d');
-const minimapImage = minimapCtx.createImageData(minimapCanvas.width, minimapCanvas.height);
-const minimapForward = new THREE.Vector3();
-const MINIMAP_WORLD_SIZE = 900;
-const MINIMAP_SAMPLE_STEP = MINIMAP_WORLD_SIZE / minimapCanvas.width;
-const MINIMAP_INTERVAL = 250;
-let lastMinimapUpdate = 0;
-
 document.addEventListener('keydown', (event) => {
     if (event.code === 'KeyF' && !event.ctrlKey && !event.metaKey) {
         event.preventDefault();
         flightInstrumentVisible = !flightInstrumentVisible;
         instrumentDiv.style.display = flightInstrumentVisible ? 'block' : 'none';
-    } else if (event.code === 'KeyM' && !event.ctrlKey && !event.metaKey) {
-        event.preventDefault();
-        minimapVisible = !minimapVisible;
-        minimapContainer.style.display = minimapVisible ? 'block' : 'none';
     } else if (event.code === 'F5') {
         event.preventDefault();
         debugVisible = !debugVisible;
@@ -743,65 +697,6 @@ function updateGForceEffect() {
   }
 }
 
-function drawMinimap(now) {
-    if (!minimapVisible || now - lastMinimapUpdate < MINIMAP_INTERVAL) return;
-    lastMinimapUpdate = now;
-
-    const plane = getPlane();
-    const halfMap = MINIMAP_WORLD_SIZE * 0.5;
-    const width = minimapCanvas.width;
-    const height = minimapCanvas.height;
-    const data = minimapImage.data;
-
-    for (let y = 0; y < height; y++) {
-        for (let x = 0; x < width; x++) {
-            const worldX = plane.position.x + x * MINIMAP_SAMPLE_STEP - halfMap;
-            const worldZ = plane.position.z + y * MINIMAP_SAMPLE_STEP - halfMap;
-            const color = getTerrainColorAt(worldX, worldZ);
-            const index = (x + y * width) * 4;
-
-            data[index] = color.r;
-            data[index + 1] = color.g;
-            data[index + 2] = color.b;
-            data[index + 3] = 255;
-        }
-    }
-
-    minimapCtx.putImageData(minimapImage, 0, 0);
-
-    const centerX = width * 0.5;
-    const centerY = height * 0.5;
-    minimapForward.set(0, 0, -1).applyQuaternion(plane.quaternion);
-    const heading = Math.atan2(minimapForward.x, -minimapForward.z);
-
-    minimapCtx.save();
-    minimapCtx.translate(centerX, centerY);
-    minimapCtx.rotate(heading);
-    minimapCtx.fillStyle = '#ffea00';
-    minimapCtx.strokeStyle = '#111';
-    minimapCtx.lineWidth = 2;
-    minimapCtx.beginPath();
-    minimapCtx.moveTo(0, -12);
-    minimapCtx.lineTo(8, 10);
-    minimapCtx.lineTo(0, 5);
-    minimapCtx.lineTo(-8, 10);
-    minimapCtx.closePath();
-    minimapCtx.fill();
-    minimapCtx.stroke();
-    minimapCtx.restore();
-
-    minimapCtx.strokeStyle = 'rgba(255, 255, 255, 0.75)';
-    minimapCtx.lineWidth = 1;
-    minimapCtx.beginPath();
-    minimapCtx.moveTo(centerX - 8, centerY);
-    minimapCtx.lineTo(centerX + 8, centerY);
-    minimapCtx.moveTo(centerX, centerY - 8);
-    minimapCtx.lineTo(centerX, centerY + 8);
-    minimapCtx.stroke();
-
-    minimapReadout.textContent = `MAP ${MINIMAP_WORLD_SIZE} m | X ${fmt(plane.position.x, 0)} Z ${fmt(plane.position.z, 0)}`;
-}
-
 function updateOrbitCamera(dt) {
     const plane = getPlane();
 
@@ -1016,7 +911,6 @@ function animate() {
     updateFlightInstrument();
     updateStallWarning();
     updateGForceEffect();
-    drawMinimap(now);
 
     renderer.render(scene, camera);
 }
