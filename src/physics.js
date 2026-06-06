@@ -20,7 +20,7 @@ const AERO_FEEL = {
     turnDragStrength: 0.6,
     misalignmentStrength: 2.5,
     gDragStrength: 0.4,
-    alignmentRate: 4.0
+    alignmentRate: 0.5
 };
 
 const DEFAULT_CONTROLS = {
@@ -39,7 +39,7 @@ function defineAircraft(config) {
     const { controls, ...rest } = config;
     return {
         highAoADrag: 0.8,
-        postStallFadeAngle: deg(35),
+        postStallFadeAngle: deg(15),
         crashSpeed: 15,
         ...rest,
         controls: { ...DEFAULT_CONTROLS, ...controls }
@@ -92,7 +92,7 @@ export const AIRCRAFT_PRESETS = {
         oswaldEfficiency: 0.62,
         sideForceSlope: 4.0,
         highAoADrag: 1.15,
-        postStallFadeAngle: deg(45),
+        postStallFadeAngle: deg(15),
         controls: {
             pitchSpeed: deg(140),
             rollSpeed: deg(320),
@@ -142,22 +142,16 @@ let _crashed = false;
 let _crashPos = new THREE.Vector3();
 let _crashSpeed = 0;
 let _crashCallbacks = [];
-let debugReferenceArrowsVisible = false;
 const debugVectorArrows = {};
 const DEBUG_VECTOR_ARROW_CONFIGS = [
-    { key: 'velocity', label: 'Velocity', color: 0x00e5ff, scale: 0.35, minLength: 0.2, maxLength: 35, reference: false },
-    { key: 'acceleration', label: 'Acceleration', color: 0xffffff, scale: 2.0, minLength: 0.2, maxLength: 25, reference: false },
-    { key: 'lift', label: 'Lift', color: 0x00ff66, scale: 0.08, sqrtScale: true, minLength: 0.2, maxLength: 35, reference: false },
-    { key: 'drag', label: 'Drag', color: 0xff4444, scale: 0.08, sqrtScale: true, minLength: 0.2, maxLength: 35, reference: false },
-    { key: 'thrust', label: 'Thrust', color: 0xffaa00, scale: 0.08, sqrtScale: true, minLength: 0.2, maxLength: 35, reference: false },
-    { key: 'weight', label: 'Weight', color: 0x9933ff, scale: 0.08, sqrtScale: true, minLength: 0.2, maxLength: 35, reference: false },
-    { key: 'sideForce', label: 'Side Force', color: 0xff66cc, scale: 0.08, sqrtScale: true, minLength: 0.2, maxLength: 35, reference: false },
-    { key: 'totalForce', label: 'Total Force', color: 0xffff00, scale: 0.08, sqrtScale: true, minLength: 0.2, maxLength: 40, reference: false },
-    { key: 'forward', label: 'Forward Axis', color: 0x3366ff, scale: 8.0, minLength: 0.2, maxLength: 8, reference: true },
-    { key: 'up', label: 'Up Axis', color: 0x33ff33, scale: 8.0, minLength: 0.2, maxLength: 8, reference: true },
-    { key: 'right', label: 'Right Axis', color: 0xff3333, scale: 8.0, minLength: 0.2, maxLength: 8, reference: true },
-    { key: 'liftDir', label: 'Lift Direction', color: 0x99ff99, scale: 6.0, minLength: 0.2, maxLength: 6, reference: true },
-    { key: 'velDir', label: 'Velocity Direction', color: 0x99ffff, scale: 6.0, minLength: 0.2, maxLength: 6, reference: true }
+    { key: 'velocity', label: 'Velocity', color: 0x00e5ff, scale: 0.35, minLength: 0.2, maxLength: 35 },
+    { key: 'acceleration', label: 'Acceleration', color: 0xffffff, scale: 2.0, minLength: 0.2, maxLength: 25 },
+    { key: 'lift', label: 'Lift', color: 0x00ff66, scale: 0.08, sqrtScale: true, minLength: 0.2, maxLength: 35 },
+    { key: 'drag', label: 'Drag', color: 0xff4444, scale: 0.08, sqrtScale: true, minLength: 0.2, maxLength: 35 },
+    { key: 'thrust', label: 'Thrust', color: 0xffaa00, scale: 0.08, sqrtScale: true, minLength: 0.2, maxLength: 35 },
+    { key: 'weight', label: 'Weight', color: 0x9933ff, scale: 0.08, sqrtScale: true, minLength: 0.2, maxLength: 35 },
+    { key: 'sideForce', label: 'Side Force', color: 0xff66cc, scale: 0.08, sqrtScale: true, minLength: 0.2, maxLength: 35 },
+    { key: 'totalForce', label: 'Total Force', color: 0xffff00, scale: 0.08, sqrtScale: true, minLength: 0.2, maxLength: 40 }
 ];
 
 function getAircraftMetrics(aircraft) {
@@ -319,7 +313,7 @@ function initDebugVectorArrows(scene) {
             0.8
         );
 
-        arrow.visible = debugVectorArrowsVisible && (!config.reference || debugReferenceArrowsVisible);
+        arrow.visible = debugVectorArrowsVisible;
         arrow.userData.config = config;
         arrow.line.material.depthTest = false;
         arrow.cone.material.depthTest = false;
@@ -391,8 +385,7 @@ function updateDebugVectorArrow(key, vector) {
     if (!arrow) return;
 
     const config = arrow.userData.config;
-    const groupVisible = !config.reference || debugReferenceArrowsVisible;
-    if (!config || !debugVectorArrowsVisible || !groupVisible || vector.lengthSq() < 0.000001) {
+    if (!config || !debugVectorArrowsVisible || vector.lengthSq() < 0.000001) {
         arrow.visible = false;
         return;
     }
@@ -414,26 +407,13 @@ function updateDebugVectorArrows() {
     updateDebugVectorArrow('weight', weight);
     updateDebugVectorArrow('sideForce', sideForce);
     updateDebugVectorArrow('totalForce', totalForce);
-    updateDebugVectorArrow('forward', forward);
-    updateDebugVectorArrow('up', up);
-    updateDebugVectorArrow('right', right);
-    updateDebugVectorArrow('liftDir', liftDir);
-    updateDebugVectorArrow('velDir', velDir);
+
 }
 
 export function setDebugVectorsVisible(visible) {
     debugVectorArrowsVisible = visible;
     Object.values(debugVectorArrows).forEach((arrow) => {
-        const config = arrow.userData.config;
-        arrow.visible = visible && (!config.reference || debugReferenceArrowsVisible);
-    });
-}
-
-export function setDebugReferenceVectorsVisible(visible) {
-    debugReferenceArrowsVisible = visible;
-    Object.values(debugVectorArrows).forEach((arrow) => {
-        const config = arrow.userData.config;
-        if (config.reference) arrow.visible = debugVectorArrowsVisible && visible;
+        arrow.visible = visible;
     });
 }
 
@@ -441,8 +421,7 @@ export function getDebugVectorLegend() {
     return DEBUG_VECTOR_ARROW_CONFIGS.map((config) => ({
         key: config.key,
         label: config.label,
-        color: `#${config.color.toString(16).padStart(6, '0')}`,
-        reference: config.reference
+        color: `#${config.color.toString(16).padStart(6, '0')}`
     }));
 }
 

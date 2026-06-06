@@ -8,6 +8,53 @@
 > - `---` between entries.
 
 
+## **06/06/2026 — Debug Reference Arrows Removed**
+
+**What changed:** Removed the 5 reference-axis debug arrows (`forward`, `up`, `right`, `liftDir`, `velDir`) and their F7 toggle. These vectors are still computed internally for physics but no longer rendered as arrows.
+
+**Why:** The reference arrows served no debugging purpose — they just duplicated the local axes that are already visually obvious from the aircraft model's orientation. `liftDir` and `velDir` in particular are intermediate math vectors that change every frame, making them distracting clutter rather than useful diagnostics. Removing them simplifies the debug layer, eliminates a toggle nobody used, and reduces render overhead.
+
+```js
+// before: physics.js — reference arrows in config + toggle logic
+{ key: 'forward', label: 'Forward Axis', ..., reference: true },
+{ key: 'up',     label: 'Up Axis',      ..., reference: true },
+{ key: 'right',  label: 'Right Axis',   ..., reference: true },
+{ key: 'liftDir',label: 'Lift Direction',..., reference: true },
+{ key: 'velDir', label: 'Velocity Direction',..., reference: true },
+let debugReferenceArrowsVisible = false;
+
+// after: all 5 removed, debugReferenceArrowsVisible removed, F7 handler removed
+```
+
+## **06/06/2026 — Stall & Force Application Bugfix**
+
+**What changed:** Two physics bugs fixed in `src/physics.js` — velocity alignment was overwriting the force-derived acceleration every frame, and the stall CL fade was so gradual it prevented stalls from developing.
+
+### 0. Bugfix: velocity alignment overpowering total force (`src/physics.js`)
+
+The alignment LERP after force integration was pulling 6.4% of velocity toward the aircraft's nose every frame (`alignmentRate: 4.0` at 60fps). This systematically undid the acceleration computed from lift + drag + thrust + weight + side force. In a stall the nose is pitched up, so the alignment artificially kept velocity pointing upward, masking the stall descent entirely.
+
+```js
+// before
+alignmentRate: 4.0     // 6.4% of velocity overwritten per frame
+// after
+alignmentRate: 0.5     // 0.8% — force computation now dominates
+```
+
+### 0b. Bugfix: post-stall CL fade too gradual (`src/physics.js`)
+
+`postStallFadeAngle` was 35° default / 45° F-16 — meaning CL took 35-45° of AoA past stall to drop from `clMax` to flat-plate values. At 30° AoA the plane still produced ~95% of peak lift. Reduced to 15° so the stall break is sharp and recognizable.
+
+```js
+// before
+postStallFadeAngle: deg(35),   // default (Cessna)
+postStallFadeAngle: deg(45),   // F-16 override
+// after
+postStallFadeAngle: deg(15),   // both
+```
+
+Combined effect: stalls now actually stall — lift drops sharply at the stall AoA, and the velocity vector is no longer artificially pinned to the nose, so the aircraft pitches down and descends as it should.
+
 ## **06/06/2026 — Web Worker Research; Terrain Worker (Disabled by Default); Minimap Removed**
 
 **What changed:** Four related outcomes from investigating Web Workers as a solution for main-thread lag.
@@ -61,11 +108,6 @@ In worker mode, `getHeight()` checks a main-thread sync cache (populated by work
 ### 4. Worker is *not* wired up — decision rationale
 
 With the minimap gone, `getHeight()` is called once per physics frame for collision detection. At 60fps with the existing 4000-tile LRU cache, the CPU cost of the occasional cache-miss tile generation (~2-8ms) is negligible. The worker would add message-passing latency, sync-cache complexity, and maintenance overhead — smoothing a spike that barely registers. The infrastructure is kept on disk (`enableWorker()`/`disableWorker()`/`updatePrefetch()` available) for future need, but is not wired into the startup path.
-
-### 5. Benchmarking ready
-
-Press `F8` to run the profiler (900 frames, sampled every 60). Output appears in console as CSV-like rows. Paste the full output to analyse frame-time breakdowns (chunk gen, physics, tile cache, memory).
-
 
 ## **05/06/2026 — Aerodynamic Control Authority & Flight Dynamics Overhaul**
 

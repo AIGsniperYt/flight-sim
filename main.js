@@ -18,7 +18,6 @@ import {
     onCrash,
     resetAircraft,
     getDebugVectorLegend,
-    setDebugReferenceVectorsVisible,
     setDebugVectorsVisible,
     setSuppressFlightInputs,
     setFrozen
@@ -67,23 +66,18 @@ let freeCamSpeedMul = 1;
 let freeCamYaw = 0, freeCamPitch = 0;
 let freeCamMouseDown = false;
 let freeCamLastMX = 0, freeCamLastMY = 0;
-const debugVectorLegend = getDebugVectorLegend().filter((entry) => !entry.reference).map((entry) =>
-    `<span style="white-space:nowrap;"><span style="display:inline-block;width:0.8em;height:0.8em;background:${entry.color};margin-right:4px;"></span>${entry.label}</span>`
-).join(' ');
-const debugReferenceLegend = getDebugVectorLegend().filter((entry) => entry.reference).map((entry) =>
+const debugVectorLegend = getDebugVectorLegend().map((entry) =>
     `<span style="white-space:nowrap;"><span style="display:inline-block;width:0.8em;height:0.8em;background:${entry.color};margin-right:4px;"></span>${entry.label}</span>`
 ).join(' ');
 
 let cameraMode = 'chase';
 let debugVisible = true;
 let debugArrowsVisible = true;
-let debugReferenceArrowsVisible = false;
 let gForceEffectEnabled = false;
 let flightInstrumentVisible = true;
 
 function applyDebugArrowVisibility() {
     setDebugVectorsVisible(debugVisible && debugArrowsVisible);
-    setDebugReferenceVectorsVisible(debugReferenceArrowsVisible);
 }
 
 function resetChaseCamera() {
@@ -428,10 +422,6 @@ document.addEventListener('keydown', (event) => {
         event.preventDefault();
         debugArrowsVisible = !debugArrowsVisible;
         applyDebugArrowVisibility();
-    } else if (event.code === 'F7') {
-        event.preventDefault();
-        debugReferenceArrowsVisible = !debugReferenceArrowsVisible;
-        applyDebugArrowVisibility();
     } else if (event.code === 'KeyG' && !event.ctrlKey && !event.metaKey) {
         event.preventDefault();
         gForceEffectEnabled = !gForceEffectEnabled;
@@ -463,6 +453,10 @@ document.addEventListener('keydown', (event) => {
     } else if (event.code === 'KeyU' && !event.ctrlKey && !event.metaKey) {
         const on = toggleWireframe();
         console.log(`Wireframe: ${on ? 'ON' : 'OFF'}`);
+    } else if (event.code === 'KeyT' && !event.ctrlKey && !event.metaKey) {
+        event.preventDefault();
+        toggleTrail();
+        console.log(`Wind trail: ${trailEnabled ? 'ON' : 'OFF'}`);
     }
 
     if (cameraMode === 'freecam') {
@@ -577,9 +571,8 @@ function updateDebug(dt) {
             Thrust / Drag: ${fmt(flight.thrustToDrag, 2)}<br>
             Stall Speed: ${fmt(flight.stallSpeed, 1)} m/s<br>
             Forces L/D/T/W/Y: ${fmtForce(flight.lift)} / ${fmtForce(flight.drag)} / ${fmtForce(flight.thrust)} / ${fmtForce(flight.weight)} / ${fmtForce(flight.sideForce)}<br>
-            Vector Arrows: ${debugArrowsVisible ? 'on' : 'off'} | Reference: ${debugReferenceArrowsVisible ? 'on' : 'off'}<br>
+            Vector Arrows: ${debugArrowsVisible ? 'on' : 'off'}<br>
             Forces/Motion: ${debugVectorLegend}<br>
-            Reference: ${debugReferenceLegend}<br>
             <br>
             Memory: ${memUsage}
         `;
@@ -758,6 +751,64 @@ function stopProfile() {
 }
 document.addEventListener('keydown', (e) => { if (e.code==='F8') { e.preventDefault(); PROFILE.active ? stopProfile() : startProfile(); } });
 
+// ---- wind trail (aircraft path visualisation) ----
+const TRAIL_MAX = 5000;
+let trailEnabled = false;
+let trailHead = 0;
+let trailCount = 0;
+let trailMesh = null;
+const trailPos = new Float32Array(TRAIL_MAX * 3);
+const trailCol = new Float32Array(TRAIL_MAX * 3);
+
+function initTrail() {
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(trailPos, 3));
+    geo.setAttribute('color', new THREE.BufferAttribute(trailCol, 3));
+    geo.setDrawRange(0, 0);
+    const mat = new THREE.PointsMaterial({
+        size: 3.0, vertexColors: true, transparent: true, opacity: 0.7,
+        blending: THREE.AdditiveBlending, depthWrite: false,
+        sizeAttenuation: true
+    });
+    trailMesh = new THREE.Points(geo, mat);
+    trailMesh.frustumCulled = false;
+}
+
+function updateTrail() {
+    if (!trailEnabled || !trailMesh) return;
+    const plane = getPlane();
+    const i3 = trailHead * 3;
+    trailPos[i3] = plane.position.x;
+    trailPos[i3 + 1] = plane.position.y;
+    trailPos[i3 + 2] = plane.position.z;
+    trailHead = (trailHead + 1) % TRAIL_MAX;
+    if (trailCount < TRAIL_MAX) trailCount++;
+    const attr = trailMesh.geometry.attributes.position;
+    attr.needsUpdate = true;
+    attr.count = trailCount;
+    // Update colours: newest = bright cyan, oldest = dark blue then black
+    for (let i = 0; i < trailCount; i++) {
+        const idx = ((trailHead - 1 - i + TRAIL_MAX) % TRAIL_MAX) * 3;
+        const age = i / trailCount;
+        const bright = 1 - age;
+        trailCol[idx] = 0.5 * bright;
+        trailCol[idx + 1] = 0.5 * bright;
+        trailCol[idx + 2] = bright;
+    }
+    trailMesh.geometry.attributes.color.needsUpdate = true;
+    trailMesh.geometry.setDrawRange(0, trailCount);
+}
+
+function toggleTrail() {
+    trailEnabled = !trailEnabled;
+    if (trailEnabled) {
+        if (!trailMesh) initTrail();
+        scene.add(trailMesh);
+    } else {
+        if (trailMesh) scene.remove(trailMesh);
+    }
+}
+
 // ---- crash explosion effect ----
 const EXPLOSION_DURATION = 2000;
 const EXPLOSION_PARTICLES = 200;
@@ -861,6 +912,7 @@ function animate() {
 
     updateChunks(scene, camera, frustum, cameraVelocity.x, cameraVelocity.z);
     updateExplosion();
+    updateTrail();
 
     if (isCrashed()) {
         const elapsed = now - explosionStart;
