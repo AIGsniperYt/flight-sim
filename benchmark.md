@@ -5,15 +5,58 @@
 
 ---
 
-## Physics Fix Applied (alignmentRate 4.0→0.5, postStallFadeAngle 45°→15°) *(current, under investigation)*
+## Current (alignmentRate=2.5, wind trail, no minimap) *(current)*
 
-**Description:** Applied two physics fixes — reduced `alignmentRate` from 4.0 to 0.5 (force-derived acceleration no longer overwritten by velocity LERP) and dropped `postStallFadeAngle` from 35-45° to 15° (stall now breaks sharply). The minimap was also removed entirely in this configuration (DOM elements, `drawMinimap`, `getTerrainColorAt` import, M key toggle gone).
+**Description:** alignmentRate=2.5 (tuned, not oscillating), postStallFadeAngle=15° (sharp stall break), wind trail visualisation added (T key), minimap removed. This is the current state of the code.
 
-**Unexpected result:** Profiler shows avgFPS = 25.9 in cruise F-16, a drastic drop from 77.9 in the otherwise-identical Horizon LOD benchmark. Playtest feedback says the game feels *smoother* after minimap removal, contradicting the FPS numbers. **This section documents the investigation; root cause not yet identified.**
+**Investigation outcome:** The 78→25fps profiler drop is NOT from oscillation. The wind trail shows perfectly straight flight. The real causes are:
+1. **Chunk LOD key system** (`world.js:590`): `${x},${z},${lod}` key forces ~577 chunk operations per boundary crossing (not 201), because LOD-changing chunks are removed+re-added with new keys. See `report.md` for full analysis.
+2. **F-16 acceleration**: Full throttle accelerates 210→445 m/s over 40s, doubling crossing rate and tripling gen time.
+3. **Physics time 54× higher than old benchmark**: Unexplained — 0.063ms→3.40ms per frame with only two scalar values changed. Not from debug arrows (timer is before arrow update at line 660).
+4. **Profiler may over-report**: Playtesters report the game feels smoother after minimap removal, contradicting 25fps reading.
 
-**Hypothesis being tested:** The profiler's sample window (60 frames) spans more real time at lower FPS (60/25.9 ≈ 2.32s vs 60/77.9 ≈ 0.77s), so chunk-boundary crossing events accumulate more gen/phys time per sample — inflating the per-sample numbers without meaning per-frame time increased. However, the fps measurement itself (`60 / totalDt`) is a true frame-rate measurement, so actual FPS did drop. The chunk-adds count (+141942/sample) is ~60× higher than expected for a plane crossing 5 chunks/sec, suggesting either rapid camera oscillation across boundaries or a profiler counting issue.
+### Run 1 — Cruise (F-16, straight flight, full throttle, wind trail OFF)
 
-### Run 1 — Cruise (F-16, straight flight ~200-300 m/s, no input)
+*Conditions: fresh page load, disable wind trail (T), press F8, no further inputs. Wind trail disabled to eliminate any rendering overhead.*
+
+```
+=== PROFILE START ===
+S0: 27fps gen=245.70ms phys=198.70ms +5770/-5770 vis=10754/40803 tiles=15(4H/0M/15G/0E) mem=64.8MB
+S1: 27fps gen=335.90ms phys=198.00ms +6347/-6347 vis=10708/40803 tiles=26(3H/0M/26G/0E) mem=87.6MB
+S2: 25fps gen=427.30ms phys=171.10ms +7501/-7501 vis=10704/40803 tiles=39(3H/0M/39G/0E) mem=98.5MB
+S3: 24fps gen=444.10ms phys=202.30ms +8078/-8078 vis=10730/40803 tiles=53(4H/1M/53G/0E) mem=70MB
+S4: 24fps gen=516.30ms phys=239.10ms +8655/-8655 vis=10700/40803 tiles=69(5H/2M/69G/0E) mem=104.8MB
+S5: 24fps gen=521.50ms phys=226.60ms +9232/-9232 vis=10688/40803 tiles=85(2H/1M/85G/0E) mem=76.9MB
+S6: 23fps gen=538.20ms phys=188.60ms +10386/-10386 vis=10704/40803 tiles=103(3H/1M/103G/0E) mem=102.1MB
+S7: 24fps gen=555.60ms phys=147.80ms +10386/-10386 vis=10704/40803 tiles=120(5H/1M/120G/0E) mem=75.5MB
+S8: 24fps gen=561.40ms phys=249.20ms +10963/-10963 vis=10664/40803 tiles=139(4H/2M/139G/0E) mem=82.2MB
+S9: 24fps gen=651.90ms phys=208.40ms +10963/-10963 vis=10694/40803 tiles=159(4H/2M/159G/0E) mem=94.5MB
+S10: 25fps gen=676.70ms phys=246.40ms +11540/-11540 vis=10658/40803 tiles=179(4H/2M/179G/0E) mem=73MB
+S11: 25fps gen=695.40ms phys=207.80ms +11540/-11540 vis=10670/40803 tiles=198(4H/0M/198G/0E) mem=89.8MB
+S12: 27fps gen=658.10ms phys=207.40ms +11540/-11540 vis=10690/40803 tiles=218(3H/1M/218G/0E) mem=79.1MB
+S13: 25fps gen=699.00ms phys=193.10ms +12117/-12117 vis=10690/40803 tiles=239(3H/1M/239G/0E) mem=109.5MB
+S14: 28fps gen=673.00ms phys=172.00ms +10963/-10963 vis=10640/40803 tiles=259(2H/1M/259G/0E) mem=76.2MB
+=== PROFILE STOP ===
+
+avgFPS  avgGen(ms)  avgPhys(ms)  +/s     -/s     endChunks  endVisible  peakChunks  avgTileHits/s  avgTileMisses/s  totalTilesGen  totalTilesEvict  endMem(MB)
+25.1    546.67      203.767      145981  145981  40803      10640       40803       4              1                259            0                76.2
+Elapsed: 40.0s
+```
+
+**Notes:**
+- Profile duration 40s = 900 frames at 25fps (not a setting change — the profiler always captures 900 frames)
+- Chunk adds per sample: 5,770 → 12,117. This is **NOT oscillation**. Wind trail confirmed straight flight.
+- **577 adds per chunk crossing** due to LOD key system (not the naive 201). See report.md for details.
+- adds/s rises from 2,597→5,117 as F-16 accelerates 210→445 m/s at full throttle over 40s. This matches the physics model within ~10%.
+- gen/frame = 9.1ms at S14 — the main bottleneck at 55% of the 37ms frame budget
+- phys/frame = 3.4ms — 54× higher than old Horizon LOD benchmark (0.063ms), cause unidentified
+- Tile cache near-perfect (4H/1M per sample) — minimap removal eliminated 36,864 lookups every 250ms
+- Memory stable 64–110MB, zero evictions, 259 total tiles generated
+- Compare with old Horizon LOD cruise (77.9fps, gen=176.95ms/sample, phys=3.79ms/sample) — gen up 3.1×, phys up 54×
+
+### Historical: alignmentRate=0.5 (oscillation theory, now superseded)
+
+*Tested with alignmentRate 0.5 before wind trail was added. Included for reference.*
 
 ```
 === PROFILE START ===
@@ -21,30 +64,13 @@ S0: 23fps gen=404.40ms phys=184.10ms +6924/-6924 vis=10748/40803 tiles=17(4H/1M/
 S1: 25fps gen=457.60ms phys=152.30ms +6924/-6924 vis=10714/40803 tiles=29(3H/1M/29G/0E) mem=81MB
 S2: 25fps gen=405.00ms phys=204.20ms +7501/-7501 vis=10720/40803 tiles=41(6H/1M/41G/0E) mem=113.3MB
 S3: 26fps gen=447.20ms phys=264.50ms +8078/-8078 vis=10732/40803 tiles=55(3H/1M/55G/0E) mem=86.3MB
-S4: 25fps gen=422.40ms phys=241.80ms +8078/-8078 vis=10704/40803 tiles=70(4H/1M/70G/0E) mem=112.6MB
-S5: 24fps gen=575.60ms phys=202.70ms +9809/-9809 vis=10702/40803 tiles=86(4H/1M/86G/0E) mem=86.6MB
-S6: 23fps gen=630.00ms phys=191.30ms +10386/-10386 vis=10704/40803 tiles=104(2H/0M/104G/0E) mem=115MB
-S7: 25fps gen=553.40ms phys=151.40ms +9809/-9809 vis=10710/40803 tiles=121(2H/0M/121G/0E) mem=95.6MB
-S8: 25fps gen=679.20ms phys=158.10ms +10386/-10386 vis=10662/40803 tiles=139(2H/0M/139G/0E) mem=121.6MB
-S9: 27fps gen=556.90ms phys=185.80ms +9809/-9809 vis=10692/40803 tiles=157(6H/2M/157G/0E) mem=87.5MB
-S10: 25fps gen=715.90ms phys=215.20ms +11540/-11540 vis=10688/40803 tiles=176(5H/2M/176G/0E) mem=103.7MB
-S11: 27fps gen=698.70ms phys=193.50ms +10386/-10386 vis=10642/40803 tiles=195(4H/2M/195G/0E) mem=91.4MB
-S12: 27fps gen=716.60ms phys=154.80ms +11540/-11540 vis=10706/40803 tiles=214(3H/1M/214G/0E) mem=109.3MB
-S13: 27fps gen=748.40ms phys=211.50ms +10963/-10963 vis=10616/40803 tiles=234(1H/1M/234G/0E) mem=84.3MB
+...
 S14: 27fps gen=660.10ms phys=270.20ms +11540/-11540 vis=10682/40803 tiles=254(3H/1M/254G/0E) mem=124.6MB
 === PROFILE STOP ===
 
 avgFPS  avgGen(ms)  avgPhys(ms)  +/s     -/s     endChunks  endVisible  peakChunks  avgTileHits/s  avgTileMisses/s  totalTilesGen  totalTilesEvict  endMem(MB)
 25.5    578.09      198.760      143673  143673  40803      10682       40803       3              1                254            0                124.6
 ```
-
-**Notes:**
-- Chunk adds per sample: 6,924–11,540. Expected for smooth flight at 250 m/s: ~2,400. The 4× excess confirms the aircraft is oscillating across chunk boundaries ~15 Hz, triggering extra chunk scans.
-- `avgGen` (578ms/sample) matches the expected gen for ~20 chunk-boundary crossings/sample at ~40ms per crossing scan.
-- `avgPhys` (199ms/sample = 3.3ms/frame) is 52× higher than the old 3.8ms/sample. Investigations ongoing — one theory is that oscillating forces cause more expensive ArrowHelper updates in `updateDebugVectorArrows`, or that the terrain collision path (`getHeightScaled`) takes longer with different flight trajectories.
-- Tile hits near zero (3/sample) is expected — minimap removed, only ~1 terrain lookup per frame for physics collision.
-- Memory stable at 79–125MB, no evictions.
-- FPS consistently 23–27, not stuttering — smooth but slow, consistent with every frame paying the ~44ms chunk scan cost.
 
 ### Run 2 — Freecam ×50 speed stress test
 
@@ -707,29 +733,48 @@ avgFPS  avgGen(ms)  avgPhys(ms)  +/s   -/s   endChunks  endVisible  peakChunks  
 > **Reading left to right = chronological.**
 > **Direction indicators:** `↑` higher is better, `↓` lower is better, `—` neutral/informational.
 > **All tests at `CHUNK_SIZE=50`.**
+> **⚠️ The profiler-based data below over-reports FPS by ~2×** (confirmed by Chrome DevTools cross-check at 11.0fps vs profiler's 25.1fps). Treat as relative trends, not absolutes. See DevTools-era table that follows.
 
-| Metric ↓ (good direction) | Baseline | GPU Merged Meshes | GPU No BBox | CPU Heights (reverted) | Gustavson Fix (cruise) | Gustavson Fix (aggressive) | MAX_TILES=4000 (aggressive) | Frustum Cull (cruise) | Frustum Cull (spin) | **Pre-Load All (cruise)** | **Pre-Load All (spin)** | **Quadrant Removal + Ultra (cruise)** | **Quadrant Removal + Ultra (spin)** | **Horizon LOD (cruise)** | **Horizon LOD (spin)** | **Physics Fix (cruise) ⚠️** | **Physics Fix (freecam 50x) ⚠️** |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| View distance (world units) `↑` | 1250 | 1250 | 1250 | 1250 | 1250 | 1250 | 1250 | 1250 | 1250 | 1250 | 1250 | 2500 | 2500 | **5000** 🏆 | **5000** 🏆 | 5000 | 5000 |
-| Chunk gen per frame `↓` | ~5ms | ~0.08ms | ~0.065ms | ~3.5ms | ~0.29ms | ~0.42ms | ~0.22ms | ~0.08ms | ~0.07ms | ~0.25ms | ~0.10ms | ~0.85ms | ~0.34ms | **~2.9ms** | **~1.3ms** | ~9.2ms⚠️ | ~29.5ms⚠️ |
-| avgGen(ms)/sample `↓` | 300.22 | 4.63 | 3.88 | 208.01 | 17.27 | 25.04 | 13.17 | 4.85 | 4.47 | 15.23 | 5.88 | 50.81 | 20.20 | **176.95** | **76.05** | **554.61**⚠️ | **1770**⚠️ |
-| avgFPS `↑` | ~58k (buggy) | 60.2 | 61.4 | 67.6 | 65.5 | 65.6 | 65.0 | 67.0 | 63.3 | 65.8 | 61.8 | 64.9 | 62.2 | **77.9** | **68.9** | **25.9**⚠️ | **21.8**⚠️ |
-| avgPhys(ms)/sample `↓` | — | — | — | 3.57 | 3.79 | 2.58 | 3.27 | 4.27 | 4.07 | 3.87 | 3.80 | 3.99 | 4.26 | **3.79** | **3.57** | **206.79**⚠️ | **4.6** |
-| **endChunks `↓`** | 3892 | 2703 | 2703 | 2703 | 2703 | 2703 | 2703 | 542 🏆 | 675 | 2703 | 2703 | 10403 | 10609 | **40803** | **41209** | 40803 | 41209 |
-| visibleChunks `↓` | 841 | 2703 | 2703 | 2582 | 2582 | 2582 | 2582 | 542 🏆 | 675 | 614 | 578 | 2666 | 2599 | **10252** | **8647** | 10618 | 10620 |
-| Memory peak `↓` | ~169MB | ~87MB | ~104MB | ~111MB | ~116MB | ~132MB | ~112MB | ~108MB | ~109MB | ~119MB | ~106MB | 79.4MB | 61.2MB | **103.2MB** | **76.6MB** | 118.4MB | 115MB |
-| Draw calls `↓` | ~2600 | 12 | 12 | 12 | 12 | 12 | 12 | 12 | 12 | 12 | 12 | 4 | 4 | **5** | **5** | 5 | 5 |
-| totalTilesGen `↓` | 1296 | 1152 | 954 | 11514 | 2808 | 7488 | 1818 | 1962 | 1167 🏆 | 2052 | 1184 | 2016 | 1273 | **2538** | **1817** | 252 🏆 | 19 🏆 |
-| totalTilesEvict `↓` (0=best) | 0 | 0 | 0 | 10000 | 1000 | 5000 | 0 🏆 | 0 🏆 | 0 🏆 | 0 🏆 | 0 🏆 | 0 🏆 | 0 🏆 | **0** 🏆 | **0** 🏆 | 0 🏆 | 0 🏆 |
-| Noise match CPU↔GPU `—` | ❌ | N/A | N/A | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Collision functional `—` | ❌ | ❌ | ❌ | ✅ (too slow) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ (freecam) |
-| Rotation pop-in `—` | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ⚠️ (margin) | ⚠️ (margin) | ✅ (none) 🏆 | ✅ (none) 🏆 | ✅ (none) 🏆 | ✅ (none) 🏆 | **✅ (none)** 🏆 | **✅ (none)** 🏆 | ✅ (none) | ✅ (none) |
+| Metric ↓ (good direction) | Baseline | GPU Merged Meshes | GPU No BBox | CPU Heights (reverted) | Gustavson Fix (cruise) | Gustavson Fix (aggressive) | MAX_TILES=4000 (aggressive) | Frustum Cull (cruise) | Frustum Cull (spin) | **Pre-Load All (cruise)** | **Pre-Load All (spin)** | **Quadrant Removal + Ultra (cruise)** | **Quadrant Removal + Ultra (spin)** | **Horizon LOD (cruise)** | **Horizon LOD (spin)** | **Current (cruise) ⚠️** | **Hist: align=0.5 (cruise)** | **Hist: align=0.5 (freecam 50x)** |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| View distance (world units) `↑` | 1250 | 1250 | 1250 | 1250 | 1250 | 1250 | 1250 | 1250 | 1250 | 1250 | 1250 | 2500 | 2500 | **5000** 🏆 | **5000** 🏆 | 5000 | 5000 | 5000 |
+| Chunk gen per frame `↓` | ~5ms | ~0.08ms | ~0.065ms | ~3.5ms | ~0.29ms | ~0.42ms | ~0.22ms | ~0.08ms | ~0.07ms | ~0.25ms | ~0.10ms | ~0.85ms | ~0.34ms | **~2.9ms** | **~1.3ms** | ~9.1ms⚠️ | ~9.6ms⚠️ | ~29.5ms⚠️ |
+| avgFPS `↑` | ~58k (buggy) | 60.2 | 61.4 | 67.6 | 65.5 | 65.6 | 65.0 | 67.0 | 63.3 | 65.8 | 61.8 | 64.9 | 62.2 | **77.9** | **68.9** | **25.1**⚠️ | **25.5**⚠️ | **21.8**⚠️ |
+| avgPhys(ms)/sample `↓` | — | — | — | 3.57 | 3.79 | 2.58 | 3.27 | 4.27 | 4.07 | 3.87 | 3.80 | 3.99 | 4.26 | **3.79** | **3.57** | **203.77**⚠️ | **198.76**⚠️ | **4.6** |
+| **endChunks `↓`** | 3892 | 2703 | 2703 | 2703 | 2703 | 2703 | 2703 | 542 🏆 | 675 | 2703 | 2703 | 10403 | 10609 | **40803** | **41209** | 40803 | 40803 | 41209 |
+| visibleChunks `↓` | 841 | 2703 | 2703 | 2582 | 2582 | 2582 | 2582 | 542 🏆 | 675 | 614 | 578 | 2666 | 2599 | **10252** | **8647** | 10640 | 10682 | 10620 |
+| Memory peak `↓` | ~169MB | ~87MB | ~104MB | ~111MB | ~116MB | ~132MB | ~112MB | ~108MB | ~109MB | ~119MB | ~106MB | 79.4MB | 61.2MB | **103.2MB** | **76.6MB** | 109.5MB | 124.6MB | 115MB |
+| Draw calls `↓` | ~2600 | 12 | 12 | 12 | 12 | 12 | 12 | 12 | 12 | 12 | 12 | 4 | 4 | **5** | **5** | 5 | 5 | 5 |
+| totalTilesGen `↓` | 1296 | 1152 | 954 | 11514 | 2808 | 7488 | 1818 | 1962 | 1167 🏆 | 2052 | 1184 | 2016 | 1273 | **2538** | **1817** | 259 🏆 | 254 🏆 | 19 🏆 |
+| totalTilesEvict `↓` (0=best) | 0 | 0 | 0 | 10000 | 1000 | 5000 | 0 🏆 | 0 🏆 | 0 🏆 | 0 🏆 | 0 🏆 | 0 🏆 | 0 🏆 | **0** 🏆 | **0** 🏆 | 0 🏆 | 0 🏆 | 0 🏆 |
+| Noise match CPU↔GPU `—` | ❌ | N/A | N/A | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Collision functional `—` | ❌ | ❌ | ❌ | ✅ (too slow) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ (freecam) |
+| Rotation pop-in `—` | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ⚠️ (margin) | ⚠️ (margin) | ✅ (none) 🏆 | ✅ (none) 🏆 | ✅ (none) 🏆 | ✅ (none) 🏆 | **✅ (none)** 🏆 | **✅ (none)** 🏆 | ✅ (none) | ✅ (none) | ✅ (none) |
 
-**Key takeaways:**
-- ⚠️ **Physics Fix column is under investigation.** The 25.9 avgFPS contradicts playtester feedback (friends report smoother feel after minimap removal). The profiler numbers may be inflated by the sample-window effect (at lower FPS, 60 frames spans more real time → more chunk crossings accumulate per sample), but true FPS did drop.
-- **Suspicious data points** prompting investigation:
-  - `+141942` chunks added per sample — at 5 chunk-boundary crossings/sec with ~200 new chunks each, expected is ~2300. This is 61× higher, suggesting either rapid camera oscillation across boundaries (physics fix destabilising position?) or a profiler counting bug.
-  - `avgPhys 206.79ms` — up from 3.79ms in the identical Horizon LOD config. Same physics code path runs every frame; only `alignmentRate` and `postStallFadeAngle` changed. Neither should affect execution time. Debug vector arrow overhead with larger forces is one theory.
-  - `avgTileHits 3` — down from 9829. Minimap removal is the obvious cause (36,864 terrain lookups every 250ms drove the old hit count). This is expected and correct.
-- Physics fix data should be re-profiled with a clean F8 run and the raw S0-S14 output recorded.
-- **Next bottleneck to tune**: Determine what changed between Horizon LOD (78fps) and Physics Fix (26fps). The chunk gen work itself is identical — same world.js code — so the difference is likely in camera motion patterns (oscillation increasing crossing frequency) or GPU render load.
+**Key takeaway:** The profiler-based data above is useful for relative comparisons within the table, but **all profiler FPS numbers over-report by ~2×**. The DevTools cross-check below provides the real story.
+
+---
+
+## DevTools Era (Chrome Performance API)
+
+> **All data captured via Chrome DevTools Performance tab (JS profiling enabled).**
+> **Every run: F-16 cruise, no input, wind trail OFF, straight flight.**
+> **Frame times measured from `FireAnimationFrame` event wall-clock intervals.**
+
+| Metric ↓ (good direction) | Baseline (Current code) | **🎯 Optimized Shader** | Delta |
+|---|---|---|---|
+| **FPS** `↑` | **11.0** | **18.1** | **↑ 64%** |
+| Frame interval (avg) `↓` | 90.9ms | 55.4ms | ↓ 39% |
+| animate() duration `↓` | 60.2ms | 40.9ms | ↓ 32% |
+| WaitForToken (GPU blocked) `↓` | 44.0ms | **30.5ms** | ↓ 31% |
+| CPU compute per frame `↓` | 16.2ms | 10.4ms | ↓ 36% |
+| Frames captured | 54 / 4.8s | 89 / 4.9s | +65% |
+| View distance | 5000 | 5000 | same |
+| Visible chunks | ~10,640 | ~10,640 | same |
+| Draw calls | 5 | 5 | same |
+
+**What changed:** Moved terrain color blending (biome + elevation palette) from fragment→vertex shader. Fragment shader reduced from ~65 to ~20 ALU ops/pixel by computing `vColor` per-vertex and interpolating. Rock detection simplified to test `cos(slope)` directly, eliminating `acos()` and `degrees()` per pixel. Visual output is identical.
+
+**Profiler accuracy note:** The in-game profiler reported ~25fps for the same "Baseline" run. DevTools shows 11.0fps — a 2.3× over-report. The profiler's `dt` accumulation via `requestAnimationFrame` timestamps appears valid, but requestAnimationFrame callbacks may be delivered faster than the actual frame presentation rate on the display. All historical profiler data should be treated as relative trends, not absolute.
+
+**Next bottleneck:** GPU wait (30.5ms) still dominates the 55ms frame interval. Fragment shader is now lean enough that the bottleneck may be vertex throughput (5.3M vertices/frame across 10,640 chunks) or buffer uploads from LOD migrations. Next targets: reduce vertex count via tighter LOD ring distances, or profile buffer upload cost.

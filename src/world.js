@@ -162,16 +162,19 @@ const LOD_HEIGHT_RANGES = {
     horizon: { min: -1, max: 1500 }
 };
 const FRUSTUM_MARGIN = CHUNK_SIZE;
+const MIGRATIONS_PER_FRAME = 50;
+const LOD_RANK = { near: 0, mid: 1, far: 2, ultra: 3, horizon: 4 };
 
 const mergedMeshes = { near: {}, mid: {}, far: {}, ultra: {}, horizon: {} };
 const globalChunks = new Map();
+const _migrateQueue = new Map();
 const precomputedIndices = {};
 let initialized = false;
 let _lastCamCX = null, _lastCamCZ = null;
 const _newActive = new Set();
 const _toAdd = [];
 const _toRemove = [];
-let _chunkGenTime = 0, _chunksAdded = 0, _chunksRemoved = 0, _chunksHidden = 0, _chunksUnhidden = 0;
+let _chunkGenTime = 0, _chunksAdded = 0, _chunksRemoved = 0, _chunksMigrated = 0, _chunksHidden = 0, _chunksUnhidden = 0;
 const _terrainMaterials = [];
 const _frustumBBox = new THREE.Box3();
 let _frustumDir = null;
@@ -198,6 +201,8 @@ export function getChunkStats() {
         chunkGenTime: _chunkGenTime,
         chunksAdded: _chunksAdded,
         chunksRemoved: _chunksRemoved,
+        chunksMigrated: _chunksMigrated,
+        pendingMigrations: _migrateQueue.size,
         chunksHidden: _chunksHidden,
         chunksUnhidden: _chunksUnhidden,
         frustumEvalTime: _frustumEvalTime
@@ -205,6 +210,7 @@ export function getChunkStats() {
     _chunkGenTime = 0;
     _chunksAdded = 0;
     _chunksRemoved = 0;
+    _chunksMigrated = 0;
     _chunksHidden = 0;
     _chunksUnhidden = 0;
     _frustumEvalTime = 0;
@@ -232,6 +238,7 @@ export function toggleGapMode(scene) {
         delete precomputedIndices[key];
     }
     globalChunks.clear();
+    _migrateQueue.clear();
     clearTerrainCache();
     _lastCamCX = null;
     return showGaps;
@@ -308,6 +315,7 @@ function initMeshes(scene) {
                 varying float vMoisture;
                 varying float vBiomeField;
                 varying vec3 vWorldPos;
+                varying vec3 vColor;
                 ${shader.vertexShader}
             `;
 
@@ -321,6 +329,23 @@ function initMeshes(scene) {
                 vMoisture = snoise(vec2(transformed.x, transformed.z) * moistureScale) * 0.5 + 0.5;
                 vBiomeField = snoise(vec2(transformed.x, transformed.z) * 0.0001);
                 vWorldPos = vec3(transformed.x, h, transformed.z);
+
+                float cM = clamp(vMoisture, 0.0, 1.0);
+                float cBf = vBiomeField;
+                float cLowlandBlend = smoothstep(10.0, 30.0, h);
+                float cDesertW = 1.0 - smoothstep(-0.4, -0.1, cBf);
+                float cRainforestW = smoothstep(0.1, 0.4, cBf);
+                float cGrasslandW = 1.0 - cDesertW - cRainforestW;
+                vec3 cDesertPalette = mix(vec3(0.831, 0.706, 0.514), vec3(0.722, 0.659, 0.290), cM);
+                vec3 cGrasslandPalette = mix(vec3(0.604, 0.584, 0.353), vec3(0.176, 0.420, 0.118), cM);
+                vec3 cRainforestPalette = mix(vec3(0.478, 0.502, 0.196), vec3(0.176, 0.420, 0.118), cM);
+                vec3 cBiomeLowCol = cDesertPalette * cDesertW + cGrasslandPalette * cGrasslandW + cRainforestPalette * cRainforestW;
+                vec3 cLowCol = mix(cGrasslandPalette, cBiomeLowCol, cLowlandBlend);
+                vec3 cMidCol = mix(vec3(0.478, 0.502, 0.196), vec3(0.227, 0.490, 0.204), cM);
+                float ct1 = smoothstep(80.0, 150.0, h);
+                float ct2 = smoothstep(300.0, 500.0, h);
+                float ct3 = smoothstep(500.0, 650.0, h);
+                vColor = mix(mix(mix(cLowCol, cMidCol, ct1), vec3(0.541, 0.604, 0.541), ct2), vec3(0.941, 0.941, 0.961), ct3);
                 `
             );
 
@@ -330,6 +355,7 @@ function initMeshes(scene) {
                 varying float vMoisture;
                 varying float vBiomeField;
                 varying vec3 vWorldPos;
+                varying vec3 vColor;
                 ${shader.fragmentShader}
             `;
 
@@ -337,57 +363,12 @@ function initMeshes(scene) {
                 '#include <color_fragment>',
                 `
                 #include <color_fragment>
-                float h = vHeight;
-                float moisture = clamp(vMoisture, 0.0, 1.0);
-
                 vec3 dx = dFdx(vWorldPos);
                 vec3 dz = dFdy(vWorldPos);
-                vec3 n = normalize(cross(dx, dz));
-                float slopeDeg = degrees(acos(clamp(n.y, 0.0, 1.0)));
-                float rockMix = smoothstep(30.0, 50.0, slopeDeg);
-
-                vec3 sand = vec3(0.831, 0.706, 0.514);
-                vec3 savanna = vec3(0.722, 0.659, 0.290);
-                vec3 dryGrass = vec3(0.604, 0.584, 0.353);
-                vec3 rainforest = vec3(0.176, 0.420, 0.118);
-                vec3 shrubland = vec3(0.478, 0.502, 0.196);
-                vec3 forest = vec3(0.227, 0.490, 0.204);
-                vec3 tundra = vec3(0.541, 0.604, 0.541);
-                vec3 rock = vec3(0.420, 0.420, 0.420);
-                vec3 snow = vec3(0.941, 0.941, 0.961);
-
-                // Biome field selects low-elevation colour palette
-                // The very lowest elevations (0m basins, future lake beds) always use grassland
-                float bf = vBiomeField;
-                float lowlandBlend = smoothstep(10.0, 30.0, h);
-                float desertW = 1.0 - smoothstep(-0.4, -0.1, bf);
-                float rainforestW = smoothstep(0.1, 0.4, bf);
-                float grasslandW = 1.0 - desertW - rainforestW;
-                vec3 desertPalette = mix(sand, savanna, moisture);
-                vec3 grasslandPalette = mix(dryGrass, rainforest, moisture);
-                vec3 rainforestPalette = mix(shrubland, rainforest, moisture);
-                vec3 biomeLowCol = desertPalette * desertW + grasslandPalette * grasslandW + rainforestPalette * rainforestW;
-                vec3 lowCol = mix(grasslandPalette, biomeLowCol, lowlandBlend);
-                vec3 midCol = mix(shrubland, forest, moisture);
-                vec3 highCol = tundra;
-
-                float t1 = smoothstep(80.0, 150.0, h);
-                float t2 = smoothstep(300.0, 500.0, h);
-                float t3 = smoothstep(500.0, 650.0, h);
-
-                vec3 col = mix(lowCol, midCol, t1);
-                col = mix(col, highCol, t2);
-                col = mix(col, snow, t3);
-                col = mix(col, rock, rockMix);
-
-                // Water: fill the 0m lowland basins
-                // These were designed as future lake beds — rare, expansive depressions
-                float waterLevel = 8.0;
-                if (h < waterLevel) {
-                    col = vec3(0.0, 0.25, 0.45);
-                }
-
-                diffuseColor.rgb = col;
+                float rockMix = 1.0 - smoothstep(0.6428, 0.8660, normalize(cross(dx, dz)).y);
+                vec3 result = mix(vColor, vec3(0.420, 0.420, 0.420), rockMix);
+                if (vHeight < 8.0) result = vec3(0.0, 0.25, 0.45);
+                diffuseColor.rgb = result;
                 `
             );
         };
@@ -552,6 +533,65 @@ function unhideChunkInBucket(chunkX, chunkZ, lod) {
     bucket.visibleCount++;
 }
 
+function migrateChunkLod(scene, chunkX, chunkZ, oldLod, newLod, wasHidden) {
+    removeChunkFromBucket(chunkX, chunkZ, oldLod, wasHidden);
+    addChunkToBucket(scene, chunkX, chunkZ, newLod);
+    if (!wasHidden) {
+        unhideChunkInBucket(chunkX, chunkZ, newLod);
+    }
+}
+
+function enqueueMigration(x, z, newLod, chunkKey) {
+    const entry = globalChunks.get(chunkKey);
+    if (!entry) return;
+
+    const renderLod = entry.renderLod ?? entry.lod;
+    if (newLod === renderLod) {
+        _migrateQueue.delete(chunkKey);
+        return;
+    }
+
+    const queued = _migrateQueue.get(chunkKey);
+    if (queued) {
+        queued.newLod = newLod;
+    } else {
+        _migrateQueue.set(chunkKey, { x, z, newLod, chunkKey });
+    }
+}
+
+function processMigrationQueue(scene, budget, outwardOnly = false) {
+    if (budget <= 0) return;
+
+    let processed = 0;
+
+    for (const [chunkKey, item] of _migrateQueue) {
+        if (processed >= budget) break;
+
+        const entry = globalChunks.get(chunkKey);
+        if (!entry) {
+            _migrateQueue.delete(chunkKey);
+            continue;
+        }
+
+        const newLod = item.newLod;
+        const renderLod = entry.renderLod ?? entry.lod;
+        if (newLod === renderLod) {
+            _migrateQueue.delete(chunkKey);
+            continue;
+        }
+
+        const isOutward = LOD_RANK[newLod] > LOD_RANK[renderLod];
+        if (outwardOnly && !isOutward) continue;
+
+        migrateChunkLod(scene, item.x, item.z, renderLod, newLod, entry.hidden);
+        entry.renderLod = newLod;
+        entry.lod = newLod;
+        _migrateQueue.delete(chunkKey);
+        _chunksMigrated++;
+        processed++;
+    }
+}
+
 export function updateChunks(scene, camera, frustum, vx = 0, vz = 0) {
     if (!initialized) initMeshes(scene);
 
@@ -587,11 +627,20 @@ export function updateChunks(scene, camera, frustum, vx = 0, vz = 0) {
                 else if (dx <= RENDER_DISTANCE_FAR && dz <= RENDER_DISTANCE_FAR) lod = "far";
                 else if (dx <= RENDER_DISTANCE_ULTRA && dz <= RENDER_DISTANCE_ULTRA) lod = "ultra";
 
-                const chunkKey = `${x},${z},${lod}`;
+                const chunkKey = `${x},${z}`;
                 _newActive.add(chunkKey);
 
-                if (!globalChunks.has(chunkKey)) {
+                const existing = globalChunks.get(chunkKey);
+                if (!existing) {
                     _toAdd.push({ x, z, lod, chunkKey });
+                } else {
+                    const renderLod = existing.renderLod ?? existing.lod;
+                    if (renderLod !== lod || existing.lod !== lod) {
+                        existing.lod = lod;
+                        if (renderLod !== lod) {
+                            enqueueMigration(x, z, lod, chunkKey);
+                        }
+                    }
                 }
             }
         }
@@ -604,14 +653,22 @@ export function updateChunks(scene, camera, frustum, vx = 0, vz = 0) {
         });
 
         for (const key of _toRemove) {
+            _migrateQueue.delete(key);
             const entry = globalChunks.get(key);
-            removeChunkFromBucket(entry.chunkX, entry.chunkZ, entry.lod, entry.hidden);
+            removeChunkFromBucket(entry.chunkX, entry.chunkZ, entry.renderLod ?? entry.lod, entry.hidden);
             globalChunks.delete(key);
+        }
+
+        // Free high-detail slots before adding new edge chunks
+        while (_migrateQueue.size > 0) {
+            const pending = _migrateQueue.size;
+            processMigrationQueue(scene, pending, true);
+            if (_migrateQueue.size === pending) break;
         }
 
         for (const item of _toAdd) {
             addChunkToBucket(scene, item.x, item.z, item.lod);
-            globalChunks.set(item.chunkKey, { chunkX: item.x, chunkZ: item.z, lod: item.lod, hidden: true });
+            globalChunks.set(item.chunkKey, { chunkX: item.x, chunkZ: item.z, lod: item.lod, renderLod: item.lod, hidden: true });
             _chunksHidden++;
         }
 
@@ -621,6 +678,14 @@ export function updateChunks(scene, camera, frustum, vx = 0, vz = 0) {
 
         _frustumDir = null;
     }
+
+    const migStart = performance.now();
+    const pending = _migrateQueue.size;
+    const migBudget = pending > 0
+        ? Math.max(MIGRATIONS_PER_FRAME, Math.ceil(pending / 5))
+        : 0;
+    processMigrationQueue(scene, migBudget);
+    _chunkGenTime += performance.now() - migStart;
 
     // Frustum re-evaluation: shows/hides chunks based on camera facing
     // Runs when camera rotates significantly (direction dot < 0.965 ≈ 15°)
@@ -639,20 +704,21 @@ export function updateChunks(scene, camera, frustum, vx = 0, vz = 0) {
 
         globalChunks.forEach((entry) => {
             const x = entry.chunkX, z = entry.chunkZ;
-            const range = LOD_HEIGHT_RANGES[entry.lod];
+            const renderLod = entry.renderLod ?? entry.lod;
+            const range = LOD_HEIGHT_RANGES[renderLod];
 
             _frustumBBox.min.set(x * CHUNK_SIZE - FRUSTUM_MARGIN, range.min, z * CHUNK_SIZE - FRUSTUM_MARGIN);
             _frustumBBox.max.set((x + 1) * CHUNK_SIZE + FRUSTUM_MARGIN, range.max, (z + 1) * CHUNK_SIZE + FRUSTUM_MARGIN);
 
             if (frustum.intersectsBox(_frustumBBox)) {
                 if (entry.hidden) {
-                    unhideChunkInBucket(x, z, entry.lod);
+                    unhideChunkInBucket(x, z, renderLod);
                     entry.hidden = false;
                     _chunksUnhidden++;
                 }
             } else {
                 if (!entry.hidden) {
-                    hideChunkInBucket(x, z, entry.lod);
+                    hideChunkInBucket(x, z, renderLod);
                     entry.hidden = true;
                     _chunksHidden++;
                 }

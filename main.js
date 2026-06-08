@@ -528,7 +528,7 @@ function updateDebug(dt) {
             Wireframe: ${getWireframe() ? 'ON' : 'OFF'} &nbsp; <b>U</b> toggles<br>
             Visible Chunks: ${stats.visibleChunks}/${stats.totalChunks}<br>
             <b>Processing</b><br>
-            Chunk Gen: ${stats.chunkGenTime.toFixed(1)} ms &nbsp; +${stats.chunksAdded}/-${stats.chunksRemoved} &nbsp; ${stats.chunksHidden > 0 || stats.chunksUnhidden > 0 ? `h:${stats.chunksHidden}/u:${stats.chunksUnhidden}` : ''}${stats.frustumEvalTime > 0 ? ` &nbsp; fEval:${stats.frustumEvalTime.toFixed(2)}ms` : ''}<br>
+            Chunk Gen: ${stats.chunkGenTime.toFixed(1)} ms &nbsp; +${stats.chunksAdded}/-${stats.chunksRemoved}${stats.chunksMigrated > 0 ? ` mig:${stats.chunksMigrated}` : ''}${stats.pendingMigrations > 0 ? ` q:${stats.pendingMigrations}` : ''} &nbsp; ${stats.chunksHidden > 0 || stats.chunksUnhidden > 0 ? `h:${stats.chunksHidden}/u:${stats.chunksUnhidden}` : ''}${stats.frustumEvalTime > 0 ? ` &nbsp; fEval:${stats.frustumEvalTime.toFixed(2)}ms` : ''}<br>
             Physics: ${getPhysicsStats().physicsTime.toFixed(2)} ms<br>
             Terrain Cache: ${(function(){ const t=getTerrainStats(); return `${t.tiles} tiles &nbsp; ${t.tileHits}H/${t.tileMisses}M &nbsp; gen:${t.tilesGenerated} evict:${t.tileEvictions}`; })()}<br>
             Chunks: ${getShowGaps() ? 'GAPPED (dev)' : 'SEAMLESS'} <b>J</b> toggles<br>
@@ -573,6 +573,7 @@ function updateDebug(dt) {
             Forces L/D/T/W/Y: ${fmtForce(flight.lift)} / ${fmtForce(flight.drag)} / ${fmtForce(flight.thrust)} / ${fmtForce(flight.weight)} / ${fmtForce(flight.sideForce)}<br>
             Vector Arrows: ${debugArrowsVisible ? 'on' : 'off'}<br>
             Forces/Motion: ${debugVectorLegend}<br>
+            Wind Trail: <b>T</b> ${trailEnabled ? 'ON' : 'OFF'} (${trailCount} pts)<br>
             <br>
             Memory: ${memUsage}
         `;
@@ -731,9 +732,9 @@ const lastCameraPos = new THREE.Vector3();
 const cameraVelocity = new THREE.Vector3();
 
 // ---- profiler ----
-const PROFILE = { active: false, samples: [], fc: 0, ftotal: 0, gsum: 0, psum: 0, asum: 0, rsum: 0, t0: 0, maxFrames: 900, sampleEvery: 60 };
+const PROFILE = { active: false, samples: [], fc: 0, ftotal: 0, gsum: 0, psum: 0, asum: 0, rsum: 0, msum: 0, t0: 0, maxFrames: 900, sampleEvery: 60 };
 function startProfile() {
-    PROFILE.active = true; PROFILE.samples = []; PROFILE.fc = 0; PROFILE.ftotal = 0; PROFILE.gsum = 0; PROFILE.psum = 0; PROFILE.asum = 0; PROFILE.rsum = 0; PROFILE.t0 = performance.now();
+    PROFILE.active = true; PROFILE.samples = []; PROFILE.fc = 0; PROFILE.ftotal = 0; PROFILE.gsum = 0; PROFILE.psum = 0; PROFILE.asum = 0; PROFILE.rsum = 0; PROFILE.msum = 0; PROFILE.t0 = performance.now();
     console.log('=== PROFILE START ===');
 }
 function stopProfile() {
@@ -752,60 +753,93 @@ function stopProfile() {
 document.addEventListener('keydown', (e) => { if (e.code==='F8') { e.preventDefault(); PROFILE.active ? stopProfile() : startProfile(); } });
 
 // ---- wind trail (aircraft path visualisation) ----
-const TRAIL_MAX = 5000;
-let trailEnabled = false;
-let trailHead = 0;
+const TRAIL_MAX = 4000;
+let trailEnabled = true;
 let trailCount = 0;
-let trailMesh = null;
+let trailLine = null;
 const trailPos = new Float32Array(TRAIL_MAX * 3);
 const trailCol = new Float32Array(TRAIL_MAX * 3);
+const trailSiz = new Float32Array(TRAIL_MAX);
 
 function initTrail() {
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(trailPos, 3));
     geo.setAttribute('color', new THREE.BufferAttribute(trailCol, 3));
+    geo.setAttribute('aSize', new THREE.BufferAttribute(trailSiz, 1));
     geo.setDrawRange(0, 0);
     const mat = new THREE.PointsMaterial({
-        size: 3.0, vertexColors: true, transparent: true, opacity: 0.7,
-        blending: THREE.AdditiveBlending, depthWrite: false,
+        size: 1, vertexColors: true, transparent: true, opacity: 0.9,
+        blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false,
         sizeAttenuation: true
     });
-    trailMesh = new THREE.Points(geo, mat);
-    trailMesh.frustumCulled = false;
+    mat.onBeforeCompile = (shader) => {
+        shader.vertexShader = shader.vertexShader
+            .replace('uniform float size;', 'uniform float size;\nattribute float aSize;')
+            .replace('gl_PointSize = size', 'gl_PointSize = aSize');
+    };
+    trailLine = new THREE.Points(geo, mat);
+    trailLine.frustumCulled = false;
+    trailLine.renderOrder = 999;
+    scene.add(trailLine);
+}
+
+function recalcTrailSizes(count) {
+    if (count < 2) return;
+    const step = 13 / (count - 1);
+    for (let i = 0; i < count; i++) trailSiz[i] = 15 - i * step;
 }
 
 function updateTrail() {
-    if (!trailEnabled || !trailMesh) return;
+    if (!trailEnabled || !trailLine) return;
     const plane = getPlane();
-    const i3 = trailHead * 3;
-    trailPos[i3] = plane.position.x;
-    trailPos[i3 + 1] = plane.position.y;
-    trailPos[i3 + 2] = plane.position.z;
-    trailHead = (trailHead + 1) % TRAIL_MAX;
-    if (trailCount < TRAIL_MAX) trailCount++;
-    const attr = trailMesh.geometry.attributes.position;
-    attr.needsUpdate = true;
-    attr.count = trailCount;
-    // Update colours: newest = bright cyan, oldest = dark blue then black
-    for (let i = 0; i < trailCount; i++) {
-        const idx = ((trailHead - 1 - i + TRAIL_MAX) % TRAIL_MAX) * 3;
-        const age = i / trailCount;
-        const bright = 1 - age;
-        trailCol[idx] = 0.5 * bright;
-        trailCol[idx + 1] = 0.5 * bright;
-        trailCol[idx + 2] = bright;
+    if (trailCount < TRAIL_MAX) {
+        const tail = trailCount * 3;
+        trailPos[tail] = plane.position.x;
+        trailPos[tail + 1] = plane.position.y;
+        trailPos[tail + 2] = plane.position.z;
+        trailCount++;
+        trailCol[tail] = 1.0;
+        trailCol[tail + 1] = 1.0;
+        trailCol[tail + 2] = 0.6;
+        for (let i = 0; i < tail; i += 3) {
+            trailCol[i] *= 0.97;
+            trailCol[i + 1] *= 0.96;
+            trailCol[i + 2] *= 0.98;
+        }
+    } else {
+        trailPos.copyWithin(0, 3, TRAIL_MAX * 3);
+        trailCol.copyWithin(0, 3, TRAIL_MAX * 3);
+        trailSiz.copyWithin(0, 1, TRAIL_MAX);
+        const tail = (TRAIL_MAX - 1) * 3;
+        trailPos[tail] = plane.position.x;
+        trailPos[tail + 1] = plane.position.y;
+        trailPos[tail + 2] = plane.position.z;
+        trailCol[tail] = 1.0;
+        trailCol[tail + 1] = 1.0;
+        trailCol[tail + 2] = 0.6;
+        for (let i = 0; i < tail; i += 3) {
+            trailCol[i] *= 0.97;
+            trailCol[i + 1] *= 0.96;
+            trailCol[i + 2] *= 0.98;
+        }
     }
-    trailMesh.geometry.attributes.color.needsUpdate = true;
-    trailMesh.geometry.setDrawRange(0, trailCount);
+    recalcTrailSizes(trailCount);
+    const posAttr = trailLine.geometry.attributes.position;
+    const colAttr = trailLine.geometry.attributes.color;
+    const sizAttr = trailLine.geometry.attributes.aSize;
+    posAttr.needsUpdate = true;
+    colAttr.needsUpdate = true;
+    sizAttr.needsUpdate = true;
+    trailLine.geometry.setDrawRange(0, trailCount);
 }
 
 function toggleTrail() {
     trailEnabled = !trailEnabled;
     if (trailEnabled) {
-        if (!trailMesh) initTrail();
-        scene.add(trailMesh);
+        if (!trailLine) initTrail();
+        else scene.add(trailLine);
     } else {
-        if (trailMesh) scene.remove(trailMesh);
+        if (trailLine) scene.remove(trailLine);
     }
 }
 
@@ -934,6 +968,7 @@ function animate() {
         PROFILE.gsum += s.chunkGenTime;
         PROFILE.asum += s.chunksAdded;
         PROFILE.rsum += s.chunksRemoved;
+        PROFILE.msum += s.chunksMigrated;
 
         const ps = getPhysicsStats();
         PROFILE.psum += ps.physicsTime;
@@ -946,14 +981,16 @@ function animate() {
                 phy: PROFILE.psum,
                 ads: PROFILE.asum,
                 rem: PROFILE.rsum,
+                mig: PROFILE.msum,
+                q: s.pendingMigrations,
                 tch: s.totalChunks,
                 vch: s.visibleChunks,
                 th: ts.tileHits, tm: ts.tileMisses, tg: ts.tilesGenerated, te: ts.tileEvictions,
                 mem: performance.memory ? +(performance.memory.usedJSHeapSize / 1048576).toFixed(1) : 0
             };
             PROFILE.samples.push(smp);
-            console.log(`S${PROFILE.samples.length-1}: ${smp.fps.toFixed(0)}fps gen=${smp.gen.toFixed(2)}ms phys=${smp.phy.toFixed(2)}ms +${smp.ads}/-${smp.rem} vis=${smp.vch}/${smp.tch} tiles=${ts.tiles}(${smp.th}H/${smp.tm}M/${smp.tg}G/${smp.te}E) mem=${smp.mem}MB`);
-            PROFILE.ftotal = 0; PROFILE.gsum = 0; PROFILE.psum = 0; PROFILE.asum = 0; PROFILE.rsum = 0;
+            console.log(`S${PROFILE.samples.length-1}: ${smp.fps.toFixed(0)}fps gen=${smp.gen.toFixed(2)}ms phys=${smp.phy.toFixed(2)}ms +${smp.ads}/-${smp.rem} mig=${smp.mig} q=${smp.q} vis=${smp.vch}/${smp.tch} tiles=${ts.tiles}(${smp.th}H/${smp.tm}M/${smp.tg}G/${smp.te}E) mem=${smp.mem}MB`);
+            PROFILE.ftotal = 0; PROFILE.gsum = 0; PROFILE.psum = 0; PROFILE.asum = 0; PROFILE.rsum = 0; PROFILE.msum = 0;
         }
 
         if (PROFILE.fc >= PROFILE.maxFrames) stopProfile();
@@ -966,6 +1003,8 @@ function animate() {
 
     renderer.render(scene, camera);
 }
+
+initTrail();
 
 animate();
 

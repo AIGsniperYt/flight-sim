@@ -20,7 +20,7 @@ const AERO_FEEL = {
     turnDragStrength: 0.6,
     misalignmentStrength: 2.5,
     gDragStrength: 0.4,
-    alignmentRate: 0.5
+    alignmentRate: 2.5
 };
 
 const DEFAULT_CONTROLS = {
@@ -79,6 +79,7 @@ export const AIRCRAFT_PRESETS = {
         wingSpan: 10.0,
         sideArea: 16.0,
         maxThrust: 129000,
+        initialThrottle: 0.55,
         crashSpeed: 100,
         initialAltitude: 650,
         initialSpeed: 210,

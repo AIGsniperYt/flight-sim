@@ -8,6 +8,187 @@
 > - `---` between entries.
 
 
+## **06/06/2026 — GPU Optimization: Terrain Color Moved from Fragment to Vertex Shader**
+
+**What changed:** The terrain biome/height color blending was running per-pixel in the fragment shader (~65 ALU ops/pixel). Moved it to the vertex shader where it runs per-vertex instead, cutting the fragment shader to ~20 ops/pixel. Also optimized rock-slope detection by testing `cos(slope)` directly instead of `acos()`+`degrees()`.
+
+### 1. Color blending moved to vertex shader (`src/world.js`)
+
+The color computation (biome palette selection, moisture blending, elevation band transitions) now runs once per vertex and the result is interpolated across triangles as `vColor`. Visual result is identical — the noise fields vary smoothly enough that per-vertex interpolation is indistinguishable from per-pixel evaluation.
+
+```glsl
+// before (fragment shader, per-pixel): ~65 ALU ops
+float h = vHeight;
+float moisture = clamp(vMoisture, 0.0, 1.0);
+// ...10 mix/smoothstep/blend operations...
+
+// after (vertex shader, per-vertex): moved to vertex
+vColor = mix(mix(mix(cLowCol, cMidCol, ct1), cHighCol, ct2), cSnow, ct3);
+
+// after (fragment shader, per-pixel): ~20 ALU ops
+float rockMix = 1.0 - smoothstep(0.6428, 0.8660, normalize(cross(dFdx(vWorldPos), dFdy(vWorldPos))).y);
+vec3 result = mix(vColor, vec3(0.420, 0.420, 0.420), rockMix);
+if (vHeight < 8.0) result = vec3(0.0, 0.25, 0.45);
+diffuseColor.rgb = result;
+```
+
+### 2. Rock detection simplified (`src/world.js:368`)
+
+`acos(cos(slope))` → directly test `cos(slope)` against cos(30°) and cos(50°). Eliminates `acos()` and `degrees()` per pixel:
+
+```glsl
+// before: acos + degrees + two smoothsteps
+float slopeDeg = degrees(acos(clamp(n.y, 0.0, 1.0)));
+float rockMix = smoothstep(30.0, 50.0, slopeDeg);
+
+// after: single smoothstep on n.y, no acos/degrees
+float rockMix = 1.0 - smoothstep(0.6428, 0.8660, n.y);
+```
+
+### Results (verified with Chrome DevTools, 4.9s capture)
+
+| Metric | Before | After | Delta |
+|---|---|---|---|
+| **FPS** | 11.0 | **18.1** | ↑ 64% |
+| GPU wait per frame | 44ms | **30.5ms** | ↓ 31% |
+| animate() duration | 60ms | **41ms** | ↓ 32% |
+
+No visual quality change — same render distance (5000 units), same 10,662 visible chunks, same biome colors. The 18fps represents real frame delivery, cross-checked against DevTools (the in-game profiler was found to over-report by ~2×).
+
+---
+
+## **06/06/2026 — Fix: Slot Exhaustion from Inward-Only LOD (reverted)**
+
+**BUG:** Inward-only LOD migrations left chunks in high-detail buckets (near/mid) when the camera moved away. Those slots were never freed until the chunk left render range entirely, exhausting near (250 slots) and mid (700) buckets — `No free slots in bucket`.
+
+**Fix:** Outward migrations restored. On each chunk crossing, all outward migrations run synchronously before new edge chunks are added (frees slots). Inward upgrades still spread across frames via the migration queue.
+
+```js
+// after removes, before adds — drain outward migrations first
+while (_migrateQueue.size > 0) {
+    const pending = _migrateQueue.size;
+    processMigrationQueue(scene, pending, true);
+    if (_migrateQueue.size === pending) break;
+}
+```
+
+---
+
+## **06/06/2026 — Inward-Only LOD Migrations** *(reverted — caused slot exhaustion)*
+
+**What changed:** ~~Outward LOD changes no longer trigger bucket migrations.~~ Reverted in next entry.
+
+---
+
+## **06/06/2026 — Spread LOD Migrations Across Frames**
+
+**What changed:** LOD ring migrations are queued on chunk-boundary crossing and processed gradually instead of all at once. Budget is adaptive: at least 50/frame, or enough to drain the queue within ~5 frames.
+
+**Why:** Each crossing still needs ~376 LOD bucket migrations, but doing them in one frame caused ~40ms spikes. Spreading over several frames turns one spike into smaller ones — same total work, smoother frame times.
+
+```js
+// before — all migrations in the crossing frame
+for (const item of _toMigrate) { migrateChunkLod(...); }
+
+// after — queue on crossing, drain 50/frame every frame
+for (const item of _toMigrate) { enqueueMigration(...); }
+processMigrationQueue(scene, MIGRATIONS_PER_FRAME);  // runs every frame
+```
+
+Profiler now logs `mig=` (migrations completed) and `q=` (queue depth).
+
+---
+
+## **06/06/2026 — LOD Key Fix: Position-Only Chunk Keys + F-16 Cruise Throttle**
+
+**What changed:** Implemented the chunk LOD key refactor identified in the performance investigation.
+
+### 1. Position-only chunk keys (`src/world.js`)
+
+LOD is no longer embedded in the global chunk key. Keys are `${x},${z}`; LOD is a mutable field on each entry. When a chunk's LOD ring changes, it migrates between merged-mesh buckets instead of being removed and re-added as a new key.
+
+```js
+// before
+const chunkKey = `${x},${z},${lod}`;
+if (!globalChunks.has(chunkKey)) { _toAdd.push(...); }
+
+// after
+const chunkKey = `${x},${z}`;
+const existing = globalChunks.get(chunkKey);
+if (!existing) { _toAdd.push(...); }
+else if (existing.lod !== lod) { _toMigrate.push(...); }
+```
+
+Profiler now tracks `chunksMigrated` separately from adds/removes. Expected: ~201 adds per boundary crossing instead of ~577.
+
+### 2. F-16 cruise throttle (`src/physics.js`)
+
+`initialThrottle: 0.55` on the F-16 preset so no-input benchmark runs hold ~210 m/s instead of accelerating to ~445 m/s on full afterburner.
+
+---
+
+## **06/06/2026 — Investigation: No Oscillation Found — Chunk LOD Key System Is the Real Bottleneck**
+
+**What changed:** Extended investigation into the 78→25fps profiler regression — ruled out the oscillation theory and identified the actual cause.
+
+### Background — Why We Looked
+
+After removing the minimap and setting alignmentRate=0.5 (stall fix), the profiler showed avgFPS had collapsed from 77.9 to 25.9. The initial hypothesis was a ~15Hz limit-cycle oscillation from weak velocity-to-nose coupling. alignmentRate was raised to 2.5 and a wind trail was added (T key) to visually detect oscillation.
+
+### Finding: No Oscillation — the Wind Trail Is Straight
+
+Multiple benchmark runs at alignmentRate=2.5 with wind trail enabled showed a **perfectly straight trail**. No waves, no wobble. The oscillation theory was wrong.
+
+### Root Cause: Chunk LOD Key System (`world.js:590`)
+
+Every chunk is keyed as `${x},${z},${lod}`. When the camera crosses a chunk boundary, LODs are reassigned for all ~40k positions. Any chunk that changes LOD gets a **new key**, triggering a remove+re-add even though the chunk never left the loaded area.
+
+**Per chunk crossing (+X direction):**
+
+| Source | Adds | Why |
+|---|---|---|
+| Leading edge | 201 | New chunks entering render radius |
+| Inward LOD migration | 188 | Chunks moving to higher LOD (far→mid, mid→near, etc.) |
+| Outward LOD migration | 188 | Chunks moving to lower LOD (near→mid, mid→far, etc.) |
+| **Total** | **577** | vs 201 if LOD not in key |
+
+The 188+188 = 376 LOD re-additions are invisible to the user but count toward `_chunksAdded` → `addChunkToBucket()` → full geometry init.
+
+### Amplifying Factor: F-16 Full-Throttle Acceleration
+
+The F-16 at 100% throttle accelerates from 210 → ~445 m/s over 40 seconds, doubling the crossing rate. This explains why gen time nearly triples from S0 to S14.
+```
+t=0s:  v=210m/s  crossings=4.2/s  adds=2,433/s (observed 2,597)
+t=35s: v=445m/s  crossings=8.9/s  adds=5,088/s (observed 5,117)
+```
+
+### The 54× Physics Time Increase
+
+`_physicsTime` per frame went from 0.063ms (old benchmark) to 3.40ms (current) with only two scalar values changed. The timing mechanism (`_start`/`_physicsTime` at lines 445/660) is identical between old and new code. Debug arrows run AFTER the timer (line 661) and don't contribute. **The cause of the physics time increase remains unidentified**, though possibilities include V8 JIT deoptimization or the old measurement being invalid.
+
+### Profiler Accuracy Concern
+
+Playtesters report the game feels *smoother* after the minimap removal, directly contradicting the profiler's 25fps reading. The absolute numbers may be inflated. Profile duration grew from ~11s to ~40s as a consequence of lower FPS (900 frames at 25fps takes longer), not a cause.
+
+### Wind trail visualisation (`main.js`)
+
+Press **T** to toggle a visual trail (4000-point THREE.Points, additive blending, yellow-white → dark fade). Enabled by default. Shows the aircraft's path through 3D space — straight = stable, wavy = oscillation.
+
+```js
+const TRAIL_MAX = 4000;
+let trailEnabled = true;
+function updateTrail() { ... }
+```
+
+### Next Steps
+
+1. ~~**Refactor chunk key**~~ — ✅ Done. LOD stored as mutable property; migrations tracked separately.
+2. ~~**Start at cruise throttle**~~ — ✅ Done. F-16 `initialThrottle: 0.55`.
+3. **Cross-check profiler** — render a known frame in Chrome DevTools Performance tab to verify the 25fps reading.
+4. **Re-profile with F8** — measure post-fix chunk add/migrate counts and avgFPS.
+
+---
+
 ## **06/06/2026 — Debug Reference Arrows Removed**
 
 **What changed:** Removed the 5 reference-axis debug arrows (`forward`, `up`, `right`, `liftDir`, `velDir`) and their F7 toggle. These vectors are still computed internally for physics but no longer rendered as arrows.
