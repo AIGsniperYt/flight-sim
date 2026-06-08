@@ -113,6 +113,33 @@ during a biology lesson which my physics teacher took over and forced us to do t
 
 ---
 
+## **08/06/2026 — Fix: G-Force Reading Now Includes Alignment LERP Acceleration**
+
+**Bug:** G-forces read low because `rawG = |a| / 9.81 + 1.0` used force-only acceleration, computed before the `velocity.lerp()` alignment step at `physics.js:571`. The alignment LERP artificially rotates velocity toward the nose every frame (~4%/frame at `alignmentRate: 2.5`, 60fps) — this adds real centripetal acceleration that the pilot would feel, but the G-sensor never saw it. Tight turns and aggressive pull-ups at high speed registered only 2-3G when they should be 5-9G.
+
+```js
+// before: G from forces only, then alignment adds invisible acceleration
+acceleration.copy(totalForce).divideScalar(AIRCRAFT.mass);  // forces only
+velocity.addScaledVector(acceleration, dt);
+velocity.lerp(desiredVelocity, dt * 2.5);                    // invisible Gs
+// ...
+const rawG = acceleration.length() / GRAVITY + 1.0;          // misses alignment
+
+// after: measure total acceleration from actual velocity delta
+velocity.addScaledVector(acceleration, dt);
+const velBeforeAlign = velocity.clone();
+velocity.lerp(desiredVelocity, dt * 2.5);
+acceleration.copy(velocity).sub(velBeforeAlign).divideScalar(dt);  // forces + alignment
+// ...
+const rawG = acceleration.length() / GRAVITY + 1.0;                 // correct total G
+```
+
+**Impact:** G-force readings now match what the pilot actually feels. A tight turn at 210 m/s produces ~5-6G, aggressive pull-ups register properly. `flightState.acceleration` now reflects total acceleration (lift + drag + thrust + weight + alignment LERP). Debug formula updated to `a_total = F/m + alignment`.
+
+However, now every turn feels annoyingly heavy and causes near blackout
+
+---
+
 ## **08/06/2026 — Fix: Profiler FPS Now Uses Unclamped Wall-Clock Time**
 
 **Bug:** `PROFILE.ftotal += dt` used the clamped delta (`min(0.05, actual)`), accumulating less time than real. A 60ms frame reported as 50ms — FPS over-reported by ~20% during slow frames.

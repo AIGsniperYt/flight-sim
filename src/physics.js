@@ -565,11 +565,14 @@ export function updatePlane(dt) {
     acceleration.copy(totalForce).divideScalar(AIRCRAFT.mass);
 
     velocity.addScaledVector(acceleration, dt);
+    const velBeforeAlign = velocity.clone();
     const postAccelerationSpeed = velocity.length();
     if (postAccelerationSpeed > 0.001) {
         desiredVelocity.copy(forward).multiplyScalar(postAccelerationSpeed);
         velocity.lerp(desiredVelocity, Math.min(1, dt * AERO_FEEL.alignmentRate));
     }
+    // G-force must reflect total acceleration (forces + alignment), not just forces
+    acceleration.copy(velocity).sub(velBeforeAlign).divideScalar(dt);
     plane.position.addScaledVector(velocity, dt);
 
     if (!_crashed) {
@@ -650,7 +653,7 @@ export function updatePlane(dt) {
     flightState.formulas.thrust = `T = throttle*Tmax = ${throttle.toFixed(2)}*${AIRCRAFT.maxThrust.toFixed(0)} = ${thrustForce.toFixed(1)} N`;
     flightState.formulas.weight = `W = m*g = ${AIRCRAFT.mass.toFixed(0)}*${GRAVITY.toFixed(2)} = ${weightForce.toFixed(1)} N`;
     flightState.formulas.sideForce = `Y = q*Sside*CY = ${dynamicPressure.toFixed(1)}*${AIRCRAFT.sideArea.toFixed(1)}*${sideCoefficient.toFixed(3)} = ${sideForceMag.toFixed(1)} N`;
-    flightState.formulas.acceleration = `a = F/m = (${totalForce.x.toFixed(1)}, ${totalForce.y.toFixed(1)}, ${totalForce.z.toFixed(1)})/${AIRCRAFT.mass.toFixed(0)} = (${acceleration.x.toFixed(2)}, ${acceleration.y.toFixed(2)}, ${acceleration.z.toFixed(2)}) m/s^2`;
+    flightState.formulas.acceleration = `a_total = F/m + alignment = (${totalForce.x.toFixed(1)}, ${totalForce.y.toFixed(1)}, ${totalForce.z.toFixed(1)})/${AIRCRAFT.mass.toFixed(0)} → (${acceleration.x.toFixed(2)}, ${acceleration.y.toFixed(2)}, ${acceleration.z.toFixed(2)}) m/s^2`;
     const rawG = acceleration.length() / GRAVITY + 1.0;
     _smoothedGForce += (rawG - _smoothedGForce) * Math.min(1, dt * 8);
     flightState.gForce = _smoothedGForce;
