@@ -732,9 +732,9 @@ const lastCameraPos = new THREE.Vector3();
 const cameraVelocity = new THREE.Vector3();
 
 // ---- profiler ----
-const PROFILE = { active: false, samples: [], fc: 0, ftotal: 0, gsum: 0, psum: 0, asum: 0, rsum: 0, msum: 0, t0: 0, maxFrames: 900, sampleEvery: 60 };
+const PROFILE = { active: false, samples: [], fc: 0, ftotal: 0, gsum: 0, psum: 0, asum: 0, rsum: 0, t0: 0, maxFrames: 900, sampleEvery: 60 };
 function startProfile() {
-    PROFILE.active = true; PROFILE.samples = []; PROFILE.fc = 0; PROFILE.ftotal = 0; PROFILE.gsum = 0; PROFILE.psum = 0; PROFILE.asum = 0; PROFILE.rsum = 0; PROFILE.msum = 0; PROFILE.t0 = performance.now();
+    PROFILE.active = true; PROFILE.samples = []; PROFILE.fc = 0; PROFILE.ftotal = 0; PROFILE.gsum = 0; PROFILE.psum = 0; PROFILE.asum = 0; PROFILE.rsum = 0; PROFILE.t0 = performance.now();
     console.log('=== PROFILE START ===');
 }
 function stopProfile() {
@@ -927,12 +927,17 @@ function animate() {
     requestAnimationFrame(animate);
 
     const now = performance.now();
-    const dt = Math.min(0.05, (now - lastFrameTime) / 1000);
+    const actualElapsedSeconds = (now - lastFrameTime) / 1000;
+
+    // Use clamped dt strictly for physics/cameras to prevent clipping bugs
+    const dt = Math.min(0.05, actualElapsedSeconds);
     lastFrameTime = now;
 
+    // 1. Structural Updates
     updatePlane(dt);
     updateOrbitCamera(dt);
 
+    // 2. Matrix & Frustum Operations
     camera.updateMatrixWorld();
     viewProjectionMatrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
     frustum.setFromProjectionMatrix(viewProjectionMatrix);
@@ -944,10 +949,12 @@ function animate() {
     }
     lastCameraPos.copy(camera.position);
 
+    // 3. World Streamers
     updateChunks(scene, camera, frustum, cameraVelocity.x, cameraVelocity.z);
     updateExplosion();
     updateTrail();
 
+    // 4. Respawn Logic
     if (isCrashed()) {
         const elapsed = now - explosionStart;
         if (explosionStart > 0 && elapsed > 3000 && !_respawning) {
@@ -961,14 +968,14 @@ function animate() {
         _respawning = false;
     }
 
+    // 5. FIXED PROFILER — uses actual (unclamped) time for correct FPS
     if (PROFILE.active) {
         PROFILE.fc++;
         const s = getChunkStats();
-        PROFILE.ftotal += dt;
+        PROFILE.ftotal += actualElapsedSeconds;
         PROFILE.gsum += s.chunkGenTime;
         PROFILE.asum += s.chunksAdded;
         PROFILE.rsum += s.chunksRemoved;
-        PROFILE.msum += s.chunksMigrated;
 
         const ps = getPhysicsStats();
         PROFILE.psum += ps.physicsTime;
@@ -981,27 +988,28 @@ function animate() {
                 phy: PROFILE.psum,
                 ads: PROFILE.asum,
                 rem: PROFILE.rsum,
-                mig: PROFILE.msum,
-                q: s.pendingMigrations,
                 tch: s.totalChunks,
                 vch: s.visibleChunks,
                 th: ts.tileHits, tm: ts.tileMisses, tg: ts.tilesGenerated, te: ts.tileEvictions,
                 mem: performance.memory ? +(performance.memory.usedJSHeapSize / 1048576).toFixed(1) : 0
             };
             PROFILE.samples.push(smp);
-            console.log(`S${PROFILE.samples.length-1}: ${smp.fps.toFixed(0)}fps gen=${smp.gen.toFixed(2)}ms phys=${smp.phy.toFixed(2)}ms +${smp.ads}/-${smp.rem} mig=${smp.mig} q=${smp.q} vis=${smp.vch}/${smp.tch} tiles=${ts.tiles}(${smp.th}H/${smp.tm}M/${smp.tg}G/${smp.te}E) mem=${smp.mem}MB`);
-            PROFILE.ftotal = 0; PROFILE.gsum = 0; PROFILE.psum = 0; PROFILE.asum = 0; PROFILE.rsum = 0; PROFILE.msum = 0;
+            console.log(`S${PROFILE.samples.length-1}: ${smp.fps.toFixed(0)}fps gen=${smp.gen.toFixed(2)}ms phys=${smp.phy.toFixed(2)}ms +${smp.ads}/-${smp.rem} vis=${smp.vch}/${smp.tch} tiles=${ts.tiles}(${smp.th}H/${smp.tm}M/${smp.tg}G/${smp.te}E) mem=${smp.mem}MB`);
+
+            PROFILE.ftotal = 0; PROFILE.gsum = 0; PROFILE.psum = 0; PROFILE.asum = 0; PROFILE.rsum = 0;
         }
 
         if (PROFILE.fc >= PROFILE.maxFrames) stopProfile();
     }
 
+    // 6. WebGL Draw Call (before DOM updates for GPU/CPU parallelism)
+    renderer.render(scene, camera);
+
+    // 7. Post-Render UI Updates
     updateDebug(dt * 1000);
     updateFlightInstrument();
     updateStallWarning();
     updateGForceEffect();
-
-    renderer.render(scene, camera);
 }
 
 initTrail();
