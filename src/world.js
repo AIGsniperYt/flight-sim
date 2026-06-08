@@ -137,7 +137,7 @@ float computeHeight(float wx, float wz, float baseScale, float hillScale, float 
 `;
 
 const CHUNK_SIZE = 50;
-const RENDER_DISTANCE_NEAR = 5;
+const RENDER_DISTANCE_NEAR = 0; // disabled — mid handles close range fine, free ~650k verts
 const RENDER_DISTANCE_MID = 12;
 const RENDER_DISTANCE_FAR = 25;
 const RENDER_DISTANCE_ULTRA = 50;
@@ -192,6 +192,21 @@ export function getWireframe() {
 
 export function getChunkSize() {
     return CHUNK_SIZE;
+}
+
+const _lodGeomStats = (() => {
+    const stats = {};
+    for (const [lod, config] of Object.entries(LOD_CONFIGS)) {
+        const vps = CHUNK_SIZE / config.step + 1;
+        const verts = vps * vps;
+        const tris = (vps - 1) * (vps - 1) * 2;
+        stats[lod] = { vertsPerChunk: verts, trisPerChunk: tris, maxChunks: config.maxChunks };
+    }
+    return stats;
+})();
+
+export function getLodGeometryStats() {
+    return _lodGeomStats;
 }
 
 export function getChunkStats() {
@@ -622,7 +637,7 @@ export function updateChunks(scene, camera, frustum, vx = 0, vz = 0) {
                 const dx = Math.abs(x - cameraChunkX);
                 const dz = Math.abs(z - cameraChunkZ);
                 let lod = "horizon";
-                if (dx <= RENDER_DISTANCE_NEAR && dz <= RENDER_DISTANCE_NEAR) lod = "near";
+                if (RENDER_DISTANCE_NEAR > 0 && dx <= RENDER_DISTANCE_NEAR && dz <= RENDER_DISTANCE_NEAR) lod = "near";
                 else if (dx <= RENDER_DISTANCE_MID && dz <= RENDER_DISTANCE_MID) lod = "mid";
                 else if (dx <= RENDER_DISTANCE_FAR && dz <= RENDER_DISTANCE_FAR) lod = "far";
                 else if (dx <= RENDER_DISTANCE_ULTRA && dz <= RENDER_DISTANCE_ULTRA) lod = "ultra";

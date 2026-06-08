@@ -8,6 +8,40 @@
 > - `---` between entries.
 
 
+## **08/06/2026 — Near LOD disabled, LOD geometry stats in debug**
+
+**What changed:** Three small optimisations and debug improvements.
+
+### 1. Near LOD fully disabled (`src/world.js:140, 637`)
+
+`RENDER_DISTANCE_NEAR` dropped from 5 to 0 with a `> 0` guard so the camera's own chunk can't sneak into `near` LOD. Mid (step 5, 11 verts/side) handles close terrain fine — saves ~650k verts/frame.
+
+**Why:** because the LOD system could be improved, I was imagining direction based LOD or even altitude or distance, but this radial LOD approach was certainly not the way to go, this will be overhauled soon as an optimisation update
+
+```js
+// before: near LOD active up to 5 tiles
+const RENDER_DISTANCE_NEAR = 5;
+if (dx <= RENDER_DISTANCE_NEAR && dz <= RENDER_DISTANCE_NEAR) lod = "near";
+
+// after: near LOD disabled, mid takes over
+const RENDER_DISTANCE_NEAR = 0;
+if (RENDER_DISTANCE_NEAR > 0 && dx <= RENDER_DISTANCE_NEAR && dz <= RENDER_DISTANCE_NEAR) lod = "near";
+```
+
+### 2. LOD geometry stats + total in debug (`src/world.js:197-210`, `main.js:377-388`)
+
+Pre-computed per-LOD vertex/triangle maximums (`vertsPerChunk × maxChunks`) exposed via `getLodGeometryStats()`. Debug panel now shows `LOD max: 1146kv/1008kt total ⋄ near: 650kv/500kt ⋄ mid: 85kv/140kt ⋄ ...` so you can see at a glance where the vertex budget goes.
+
+```js
+// _lodGeomStats computed once at module init
+const vps = CHUNK_SIZE / config.step + 1;  // verts per side
+const verts = vps * vps;
+const tris = (vps - 1) * (vps - 1) * 2;
+```
+
+---
+
+
 ## **08/06/2026 — F-16 HUD: Circular Artificial Horizon → Green Combat HUD Canvas Overlay**
 
 **What changed:** Replaced the old CSS circular artificial horizon (sky/ground gradient band, pitch ladder DOM elements, bank ticks, white text readout) with a full-screen `canvas`-based green monochrome HUD - because the old one looked terrible for a flipping f16 jet onboard flight instrument. Pitch ladder scrolls through a fixed centered window, heading compass wraps correctly, and all elements reposition (center vs corner) based on camera mode. Pitch instrument now uses `asin(forward.y)` — wrap-free, stays in [-90, 90].

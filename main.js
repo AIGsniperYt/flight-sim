@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { updateChunks, getChunkStats, toggleGapMode, getShowGaps, toggleWireframe, getWireframe } from './src/world.js';
+import { updateChunks, getChunkStats, getLodGeometryStats, toggleGapMode, getShowGaps, toggleWireframe, getWireframe } from './src/world.js';
 import { getTerrainStats, getHeightScaled } from './src/terrain.js';
 import {
     initPhysics,
@@ -374,6 +374,19 @@ function fmtForce(newtons) {
     return `${fmt(newtons / 1000, 2)} kN`;
 }
 
+const _geomStats = getLodGeometryStats();
+function genGeomLine() {
+    const parts = [];
+    let totalV = 0, totalT = 0;
+    for (const [lod, s] of Object.entries(_geomStats)) {
+        const maxVerts = s.vertsPerChunk * s.maxChunks;
+        const maxTris = s.trisPerChunk * s.maxChunks;
+        totalV += maxVerts; totalT += maxTris;
+        parts.push(`${lod}: ${(maxVerts / 1000).toFixed(0)}kv/${(maxTris / 1000).toFixed(0)}kt`);
+    }
+    return `LOD max: ${(totalV / 1000).toFixed(0)}kv/${(totalT / 1000).toFixed(0)}kt total &nbsp; ${parts.join(' &nbsp; ')}`;
+}
+
 function updateDebug(dt) {
     const now = performance.now();
     if (now - lastDebugUpdate < DEBUG_INTERVAL) return;
@@ -399,6 +412,7 @@ function updateDebug(dt) {
             Visible Chunks: ${stats.visibleChunks}/${stats.totalChunks}<br>
             <b>Processing</b><br>
             Chunk Gen: ${stats.chunkGenTime.toFixed(1)} ms &nbsp; +${stats.chunksAdded}/-${stats.chunksRemoved}${stats.chunksMigrated > 0 ? ` mig:${stats.chunksMigrated}` : ''}${stats.pendingMigrations > 0 ? ` q:${stats.pendingMigrations}` : ''} &nbsp; ${stats.chunksHidden > 0 || stats.chunksUnhidden > 0 ? `h:${stats.chunksHidden}/u:${stats.chunksUnhidden}` : ''}${stats.frustumEvalTime > 0 ? ` &nbsp; fEval:${stats.frustumEvalTime.toFixed(2)}ms` : ''}<br>
+            ${genGeomLine()}<br>
             Physics: ${getPhysicsStats().physicsTime.toFixed(2)} ms<br>
             Terrain Cache: ${(function(){ const t=getTerrainStats(); return `${t.tiles} tiles &nbsp; ${t.tileHits}H/${t.tileMisses}M &nbsp; gen:${t.tilesGenerated} evict:${t.tileEvictions}`; })()}<br>
             Chunks: ${getShowGaps() ? 'GAPPED (dev)' : 'SEAMLESS'} <b>J</b> toggles<br>
