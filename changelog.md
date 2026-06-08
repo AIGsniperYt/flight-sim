@@ -8,6 +8,49 @@
 > - `---` between entries.
 
 
+## **08/06/2026 — Wind Trail: Billboard Points → Expanding Cone Geometry**
+
+**What changed:** Replaced the 4000-point billboard sprite trail (janky squares, manual color fade loop) with an expanding cone tube built from `CatmullRomCurve3` + custom `BufferGeometry`. Each ring along the trail has a different radius — 0.4 at the plane (engine exhaust) widening to 4.0 at the tail (dissipating cloud). UV gradient fades the old wide end near-transparent via a canvas texture. No scrolling to avoid banding.
+
+```js
+// before: 4000 billboard squares, per-frame color multiplication loop
+trailPos[tail] = plane.position.x;
+for (let i = 0; i < tail; i += 3) trailCol[i] *= 0.97;
+
+// after: expanding cone, one ring per tubular segment, radius lerped along curve
+const radius = radiusMin + (1 - t) * (radiusMax - radiusMin);
+pos[i3] = p.x + (n.x * cos + b.x * sin) * radius;
+```
+
+Points are now offset 4 units behind the plane (local +Z axis) so the trail emerges from the tail area, not the fuselage center. 
+
+during a biology lesson which my physics teacher took over and forced us to do transformers, so i went into looking into dealing with my optimisations and fps bottlenecks, and then finally looked into 3d engines properly, and researched and am considering migrating to babylon.js
+
+---
+
+## **08/06/2026 — Fix: Profiler FPS Now Uses Unclamped Wall-Clock Time**
+
+**Bug:** `PROFILE.ftotal += dt` used the clamped delta (`min(0.05, actual)`), accumulating less time than real. A 60ms frame reported as 50ms — FPS over-reported by ~20% during slow frames.
+
+**Fix:** Separated `actualElapsedSeconds` (raw wall-clock) from `dt` (clamped for physics). Profiler now accumulates `actualElapsedSeconds`. `renderer.render()` moved before DOM updates for GPU/CPU overlap.
+
+```js
+// before
+const dt = Math.min(0.05, (now - lastFrameTime) / 1000);
+PROFILE.ftotal += dt;   // accumulates clamped time → FPS too high
+
+// after
+const actualElapsedSeconds = (now - lastFrameTime) / 1000;
+const dt = Math.min(0.05, actualElapsedSeconds);
+PROFILE.ftotal += actualElapsedSeconds;  // real wall-clock time
+```
+
+**Impact:** Profiler numbers may drop vs old runs — this is a correction, not a regression. Gameplay feel should match the profiler now. 
+
+The investigation for the sudden drop in performance is still ongoing, but has been halted temporarily. Tomorrow is our last CS lesson, so I want to update fast and add a lot in ASAP, so optimising has been put on hold. The main suspicion is either the old profiler or the new one has artefacts, meaning it is inaccurate, and I'm considering moving to using real devtools, hence the profile.json. However, all playtesters myself included feel the gameplay is at its all time smoothest high, likely due to removal of jittering fps, but this doesnt necessarily mean the fps is high, but as long as its nice igS
+
+---
+
 ## **06/06/2026 — GPU Optimization: Terrain Color Moved from Fragment to Vertex Shader**
 
 **What changed:** The terrain biome/height color blending was running per-pixel in the fragment shader (~65 ALU ops/pixel). Moved it to the vertex shader where it runs per-vertex instead, cutting the fragment shader to ~20 ops/pixel. Also optimized rock-slope detection by testing `cos(slope)` directly instead of `acos()`+`degrees()`.

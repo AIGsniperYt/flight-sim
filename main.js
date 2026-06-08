@@ -71,10 +71,9 @@ const debugVectorLegend = getDebugVectorLegend().map((entry) =>
 ).join(' ');
 
 let cameraMode = 'chase';
-let debugVisible = true;
-let debugArrowsVisible = true;
+let debugVisible = false;
+let debugArrowsVisible = false;
 let gForceEffectEnabled = false;
-let flightInstrumentVisible = true;
 
 function applyDebugArrowVisibility() {
     setDebugVectorsVisible(debugVisible && debugArrowsVisible);
@@ -169,174 +168,45 @@ debugDiv.style.fontFamily = 'monospace';
 debugDiv.style.fontSize = '12px';
 debugDiv.style.lineHeight = '1.35';
 debugDiv.style.borderRadius = '8px';
-debugDiv.style.display = 'block';
+debugDiv.style.display = 'none';
 debugDiv.style.zIndex = '9999';
 debugDiv.style.maxWidth = '520px';
 debugDiv.style.maxHeight = '85vh';
 debugDiv.style.overflowY = 'auto';
 document.body.appendChild(debugDiv);
 
-const instrumentDiv = document.createElement('div');
-instrumentDiv.style.position = 'fixed';
-instrumentDiv.style.right = '18px';
-instrumentDiv.style.bottom = '18px';
-instrumentDiv.style.width = '220px';
-instrumentDiv.style.height = '220px';
-instrumentDiv.style.border = '3px solid rgba(255, 255, 255, 0.9)';
-instrumentDiv.style.borderRadius = '50%';
-instrumentDiv.style.overflow = 'hidden';
-instrumentDiv.style.background = '#111';
-instrumentDiv.style.boxShadow = '0 0 0 2px rgba(0, 0, 0, 0.75), 0 10px 30px rgba(0, 0, 0, 0.4)';
-instrumentDiv.style.zIndex = '9998';
-instrumentDiv.style.display = 'block';
-instrumentDiv.style.pointerEvents = 'none';
-document.body.appendChild(instrumentDiv);
+// === F-16 HUD overlay (green combat HUD) ===
+const hudCanvas = document.createElement('canvas');
+hudCanvas.style.position = 'fixed';
+hudCanvas.style.top = '0';
+hudCanvas.style.left = '0';
+hudCanvas.style.width = '100%';
+hudCanvas.style.height = '100%';
+hudCanvas.style.zIndex = '9998';
+hudCanvas.style.pointerEvents = 'none';
+hudCanvas.style.display = 'block';
+document.body.appendChild(hudCanvas);
 
-const horizonBand = document.createElement('div');
-const INSTRUMENT_SIZE = 220;
-const HORIZON_BAND_SIZE = 4600;
-const HORIZON_CENTER = HORIZON_BAND_SIZE / 2;
-const PITCH_PX_PER_DEG = 3;
-const PITCH_CYCLE_DEG = 360;
-const PITCH_CYCLE_PX = PITCH_CYCLE_DEG * PITCH_PX_PER_DEG;
-horizonBand.style.position = 'absolute';
-horizonBand.style.left = `${(INSTRUMENT_SIZE - HORIZON_BAND_SIZE) / 2}px`;
-horizonBand.style.top = `${(INSTRUMENT_SIZE - HORIZON_BAND_SIZE) / 2}px`;
-horizonBand.style.width = `${HORIZON_BAND_SIZE}px`;
-horizonBand.style.height = `${HORIZON_BAND_SIZE}px`;
-horizonBand.style.background = [
-    'repeating-linear-gradient(',
-    'to bottom,',
-    '#ffffff 0px, #ffffff 3px,',
-    `#8b5a2b 3px, #8b5a2b ${PITCH_CYCLE_PX / 2 - 3}px,`,
-    `#ffffff ${PITCH_CYCLE_PX / 2 - 3}px, #ffffff ${PITCH_CYCLE_PX / 2 + 3}px,`,
-    `#4fa3ff ${PITCH_CYCLE_PX / 2 + 3}px, #4fa3ff ${PITCH_CYCLE_PX - 3}px,`,
-    `#ffffff ${PITCH_CYCLE_PX - 3}px, #ffffff ${PITCH_CYCLE_PX}px`,
-    ')'
-].join(' ');
-horizonBand.style.backgroundPositionY = `${HORIZON_CENTER % PITCH_CYCLE_PX}px`;
-horizonBand.style.transformOrigin = '50% 50%';
-instrumentDiv.appendChild(horizonBand);
+const hudCtx = hudCanvas.getContext('2d');
+let hudVisible = true;
 
-const pitchLadder = document.createElement('div');
-pitchLadder.style.position = 'absolute';
-pitchLadder.style.left = '0';
-pitchLadder.style.top = '0';
-pitchLadder.style.width = '100%';
-pitchLadder.style.height = '100%';
-pitchLadder.style.transformOrigin = '50% 50%';
-pitchLadder.style.color = '#fff';
-pitchLadder.style.font = '11px monospace';
-pitchLadder.style.textShadow = '0 1px 2px #000';
-horizonBand.appendChild(pitchLadder);
-
-const instrumentPitchLabels = [];
-
-for (let pitchMark = -720; pitchMark <= 720; pitchMark += 10) {
-    const cyclicPitch = ((pitchMark % PITCH_CYCLE_DEG) + PITCH_CYCLE_DEG) % PITCH_CYCLE_DEG;
-    const mirroredPitch = cyclicPitch > 180 ? PITCH_CYCLE_DEG - cyclicPitch : cyclicPitch;
-    const isCardinal = cyclicPitch % 90 === 0;
-    const isMajor = cyclicPitch % 30 === 0;
-    const isHorizon = cyclicPitch === 0 || cyclicPitch === 180;
-    const mark = document.createElement('div');
-    mark.style.position = 'absolute';
-    mark.style.left = '50%';
-    mark.style.top = `${HORIZON_CENTER - pitchMark * PITCH_PX_PER_DEG}px`;
-    mark.style.width = isHorizon ? '142px' : isCardinal ? '118px' : isMajor ? '92px' : '54px';
-    mark.style.height = isHorizon ? '3px' : isMajor ? '2px' : '1px';
-    mark.style.background = isHorizon ? 'rgba(255, 255, 255, 0.98)' : 'rgba(255, 255, 255, 0.88)';
-    mark.style.transform = 'translateX(-50%)';
-
-    if (isMajor) {
-        const labelText = isHorizon ? `${cyclicPitch}` : `${mirroredPitch}`;
-        const labelLeft = document.createElement('span');
-        labelLeft.textContent = labelText;
-        labelLeft.style.position = 'absolute';
-        labelLeft.style.left = '-34px';
-        labelLeft.style.top = '-7px';
-        labelLeft.style.minWidth = '24px';
-        labelLeft.style.textAlign = 'right';
-        labelLeft.style.transformOrigin = '50% 50%';
-
-        const labelRight = document.createElement('span');
-        labelRight.textContent = labelText;
-        labelRight.style.position = 'absolute';
-        labelRight.style.right = '-34px';
-        labelRight.style.top = '-7px';
-        labelRight.style.minWidth = '24px';
-        labelRight.style.textAlign = 'left';
-        labelRight.style.transformOrigin = '50% 50%';
-
-        mark.appendChild(labelLeft);
-        mark.appendChild(labelRight);
-        instrumentPitchLabels.push(labelLeft, labelRight);
-    }
-    pitchLadder.appendChild(mark);
+function resizeHUD() {
+    hudCanvas.width = window.innerWidth;
+    hudCanvas.height = window.innerHeight;
 }
+window.addEventListener('resize', resizeHUD);
+resizeHUD();
 
-const aircraftSymbol = document.createElement('div');
-aircraftSymbol.style.position = 'absolute';
-aircraftSymbol.style.left = '50%';
-aircraftSymbol.style.top = '50%';
-aircraftSymbol.style.width = '122px';
-aircraftSymbol.style.height = '28px';
-aircraftSymbol.style.transform = 'translate(-50%, -50%)';
-aircraftSymbol.style.borderTop = '3px solid #ffea00';
-aircraftSymbol.style.borderLeft = '3px solid transparent';
-aircraftSymbol.style.borderRight = '3px solid transparent';
-aircraftSymbol.style.zIndex = '2';
-instrumentDiv.appendChild(aircraftSymbol);
+const HUD_PITCH_PX = 4;
+const HUD_HEADING_PX = 3;
+const HUD_SPEED_PX = 0.4;
+const HUD_ALT_PX = 0.025;
+const HUD_PITCH_RANGE = 90;
+const HUD_HEADING_RANGE = 60;
+const HUD_TAPE_HALF = 100;
 
-const aircraftDot = document.createElement('div');
-aircraftDot.style.position = 'absolute';
-aircraftDot.style.left = '50%';
-aircraftDot.style.top = '50%';
-aircraftDot.style.width = '10px';
-aircraftDot.style.height = '10px';
-aircraftDot.style.border = '2px solid #ffea00';
-aircraftDot.style.borderRadius = '50%';
-aircraftDot.style.transform = 'translate(-50%, -50%)';
-aircraftDot.style.zIndex = '3';
-instrumentDiv.appendChild(aircraftDot);
-
-[-90, -60, -45, -30, -20, -10, 10, 20, 30, 45, 60, 90].forEach((bankMark) => {
-    const tick = document.createElement('div');
-    tick.style.position = 'absolute';
-    tick.style.left = '50%';
-    tick.style.top = '12px';
-    tick.style.width = bankMark % 30 === 0 ? '2px' : '1px';
-    tick.style.height = Math.abs(bankMark) === 45 || Math.abs(bankMark) === 90 ? '13px' : '9px';
-    tick.style.background = 'rgba(255, 255, 255, 0.82)';
-    tick.style.transformOrigin = `50% ${INSTRUMENT_SIZE / 2 - 12}px`;
-    tick.style.transform = `translateX(-50%) rotate(${bankMark}deg)`;
-    tick.style.zIndex = '3';
-    instrumentDiv.appendChild(tick);
-});
-
-const bankPointer = document.createElement('div');
-bankPointer.style.position = 'absolute';
-bankPointer.style.left = '50%';
-bankPointer.style.top = '8px';
-bankPointer.style.width = '0';
-bankPointer.style.height = '0';
-bankPointer.style.borderLeft = '7px solid transparent';
-bankPointer.style.borderRight = '7px solid transparent';
-bankPointer.style.borderBottom = '12px solid #fff';
-bankPointer.style.transform = 'translateX(-50%)';
-bankPointer.style.zIndex = '4';
-instrumentDiv.appendChild(bankPointer);
-
-const instrumentReadout = document.createElement('div');
-instrumentReadout.style.position = 'absolute';
-instrumentReadout.style.left = '0';
-instrumentReadout.style.right = '0';
-instrumentReadout.style.bottom = '18px';
-instrumentReadout.style.textAlign = 'center';
-instrumentReadout.style.color = '#fff';
-instrumentReadout.style.font = '12px monospace';
-instrumentReadout.style.textShadow = '0 1px 3px #000';
-instrumentReadout.style.zIndex = '4';
-instrumentDiv.appendChild(instrumentReadout);
+const hudForward = new THREE.Vector3();
+const hudUp = new THREE.Vector3();
 
 const stallWarning = document.createElement('div');
 stallWarning.innerHTML = `
@@ -411,8 +281,8 @@ document.body.appendChild(gForceOverlay);
 document.addEventListener('keydown', (event) => {
     if (event.code === 'KeyF' && !event.ctrlKey && !event.metaKey) {
         event.preventDefault();
-        flightInstrumentVisible = !flightInstrumentVisible;
-        instrumentDiv.style.display = flightInstrumentVisible ? 'block' : 'none';
+        hudVisible = !hudVisible;
+        hudCanvas.style.display = hudVisible ? 'block' : 'none';
     } else if (event.code === 'F5') {
         event.preventDefault();
         debugVisible = !debugVisible;
@@ -573,44 +443,192 @@ function updateDebug(dt) {
             Forces L/D/T/W/Y: ${fmtForce(flight.lift)} / ${fmtForce(flight.drag)} / ${fmtForce(flight.thrust)} / ${fmtForce(flight.weight)} / ${fmtForce(flight.sideForce)}<br>
             Vector Arrows: ${debugArrowsVisible ? 'on' : 'off'}<br>
             Forces/Motion: ${debugVectorLegend}<br>
-            Wind Trail: <b>T</b> ${trailEnabled ? 'ON' : 'OFF'} (${trailCount} pts)<br>
+            Wind Trail: <b>T</b> ${trailEnabled ? 'ON' : 'OFF'} (${trailPoints.length} pts)<br>
             <br>
             Memory: ${memUsage}
         `;
     }
 }
 
-const instrumentForward = new THREE.Vector3();
-const instrumentUp = new THREE.Vector3();
-
 function wrapDegrees(deg) {
     return ((deg % 360) + 360) % 360;
 }
 
-function wrapSignedDegrees(deg) {
-    const wrapped = wrapDegrees(deg + 180) - 180;
-    return wrapped === -180 ? 180 : wrapped;
-}
+function updateHUD() {
+    if (!hudVisible) return;
 
-function updateFlightInstrument() {
-    if (!flightInstrumentVisible) return;
+    const W = hudCanvas.width;
+    const H = hudCanvas.height;
+    hudCtx.clearRect(0, 0, W, H);
 
     const plane = getPlane();
     const flight = getFlightState();
-    instrumentForward.set(0, 0, -1).applyQuaternion(plane.quaternion).normalize();
-    instrumentUp.set(0, 1, 0).applyQuaternion(plane.quaternion).normalize();
 
-    const pitchDeg = THREE.MathUtils.radToDeg(Math.atan2(instrumentForward.y, instrumentUp.y));
-    const wrappedPitchDeg = wrapSignedDegrees(pitchDeg);
+    hudForward.set(0, 0, -1).applyQuaternion(plane.quaternion).normalize();
+    hudUp.set(0, 1, 0).applyQuaternion(plane.quaternion).normalize();
+
+    const pitchDeg = THREE.MathUtils.radToDeg(Math.asin(THREE.MathUtils.clamp(hudForward.y, -1, 1)));
+    const headingDeg = wrapDegrees(THREE.MathUtils.radToDeg(Math.atan2(hudForward.x, -hudForward.z)));
+    const speed = flight.speed;
+    const alt = plane.position.y;
+    const gForce = flight.gForce;
+    const aoa = flight.aoa;
     const bankDeg = THREE.MathUtils.radToDeg(flight.bank);
-    const headingDeg = wrapDegrees(THREE.MathUtils.radToDeg(Math.atan2(instrumentForward.x, -instrumentForward.z)));
-    const pitchOffset = wrapSignedDegrees(wrappedPitchDeg) * PITCH_PX_PER_DEG;
 
-    horizonBand.style.transform = `translateY(${pitchOffset}px) rotate(${-bankDeg}deg)`;
-    instrumentPitchLabels.forEach((label) => {
-        label.style.transform = `rotate(${bankDeg}deg)`;
-    });
-    instrumentReadout.innerHTML = `ALT ${fmt(plane.position.y, 0)} m&nbsp;&nbsp; HDG ${fmt(headingDeg, 0)}&deg;<br>P ${fmt(wrappedPitchDeg, 0)}&deg;&nbsp;&nbsp; B ${fmt(bankDeg, 0)}&deg;`;
+    let cx, cy, scl;
+    if (cameraMode === 'chase') {
+        cx = W / 2;
+        cy = H / 2;
+        scl = 1;
+    } else {
+        cx = W - 130;
+        cy = H - 130;
+        scl = 0.55;
+    }
+
+    hudCtx.save();
+    hudCtx.translate(cx, cy);
+    hudCtx.scale(scl, scl);
+
+    hudCtx.strokeStyle = '#0f0';
+    hudCtx.fillStyle = '#0f0';
+    hudCtx.lineWidth = 1;
+    hudCtx.font = '13px monospace';
+    hudCtx.textBaseline = 'middle';
+
+    // ---- Pitch ladder (clipped to fixed centered window) ----
+    const PITCH_WIN = 140;
+    const PITCH_GAP = 65;
+    const PITCH_MAX_LEN = 600;
+    for (let p = -HUD_PITCH_RANGE; p <= HUD_PITCH_RANGE; p += 5) {
+        const y = (pitchDeg - p) * HUD_PITCH_PX;
+        if (Math.abs(y) > PITCH_WIN) continue;
+        const isHorizon = p === 0;
+        const is10 = p % 10 === 0;
+        const halfLen = Math.min(PITCH_MAX_LEN, isHorizon ? W * 0.35 : is10 ? W * 0.22 : W * 0.12);
+        if (isHorizon) hudCtx.lineWidth = 2.5;
+        hudCtx.beginPath();
+        hudCtx.moveTo(-halfLen, y);
+        hudCtx.lineTo(-PITCH_GAP, y);
+        hudCtx.stroke();
+        hudCtx.beginPath();
+        hudCtx.moveTo(PITCH_GAP, y);
+        hudCtx.lineTo(halfLen, y);
+        hudCtx.stroke();
+        if (isHorizon) hudCtx.lineWidth = 1;
+        if (is10 && p !== 0) {
+            const lbl = `${Math.abs(p)}`;
+            hudCtx.textAlign = 'right';
+            hudCtx.fillText(lbl, -PITCH_GAP - 8, y);
+            hudCtx.textAlign = 'left';
+            hudCtx.fillText(lbl, PITCH_GAP + 8, y);
+        }
+    }
+
+    // ---- Center reticle ----
+    hudCtx.lineWidth = 1.5;
+    hudCtx.beginPath();
+    hudCtx.moveTo(-14, 0); hudCtx.lineTo(-5, 0);
+    hudCtx.moveTo(5, 0); hudCtx.lineTo(14, 0);
+    hudCtx.moveTo(0, -14); hudCtx.lineTo(0, -5);
+    hudCtx.moveTo(0, 5); hudCtx.lineTo(0, 14);
+    hudCtx.stroke();
+    hudCtx.lineWidth = 1;
+
+    // ---- Heading scale ----
+    const hdgY = -H * 0.38;
+    hudCtx.textAlign = 'center';
+    for (let d = -HUD_HEADING_RANGE; d <= HUD_HEADING_RANGE; d++) {
+        const deg = wrapDegrees(headingDeg + d);
+        const x = d * HUD_HEADING_PX;
+        const is10 = deg % 10 === 0;
+        const isCenter = d === 0;
+        if (!is10 && !isCenter) continue;
+        const is30 = deg % 30 === 0;
+        const tickLen = isCenter ? 14 : is30 ? 10 : 5;
+        hudCtx.beginPath();
+        hudCtx.moveTo(x, hdgY - tickLen);
+        hudCtx.lineTo(x, hdgY);
+        hudCtx.stroke();
+        if (is30 || isCenter) {
+            hudCtx.font = isCenter ? 'bold 15px monospace' : '13px monospace';
+            hudCtx.fillText(`${Math.round(deg)}°`, x, hdgY - tickLen - 6);
+            hudCtx.font = '13px monospace';
+        }
+    }
+
+    // ---- Bank arc (moved above pitch ladder, near heading scale) ----
+    const bankR = 60;
+    const bankY = -H * 0.30;
+    hudCtx.beginPath();
+    hudCtx.arc(0, bankY, bankR, -Math.PI * 0.45, Math.PI * 0.45);
+    hudCtx.stroke();
+    hudCtx.save();
+    hudCtx.translate(0, bankY);
+    hudCtx.rotate(THREE.MathUtils.degToRad(bankDeg));
+    hudCtx.beginPath();
+    hudCtx.moveTo(0, bankR);
+    hudCtx.lineTo(-4, bankR + 8);
+    hudCtx.lineTo(4, bankR + 8);
+    hudCtx.closePath();
+    hudCtx.fill();
+    hudCtx.restore();
+
+    // ---- Airspeed tape (left) ----
+    const spdX = -W * 0.4;
+    const spdCenter = speed;
+    hudCtx.font = 'bold 16px monospace';
+    hudCtx.strokeRect(spdX - 28, -14, 42, 28);
+    hudCtx.textAlign = 'center';
+    hudCtx.fillText(`${Math.round(speed)}`, spdX - 7, 1);
+    hudCtx.font = '13px monospace';
+    for (let s = Math.floor((spdCenter - HUD_TAPE_HALF) / 10) * 10; s <= spdCenter + HUD_TAPE_HALF; s += 10) {
+        if (s < 0) continue;
+        const y = (spdCenter - s) * HUD_SPEED_PX;
+        if (Math.abs(y) > HUD_TAPE_HALF * HUD_SPEED_PX * 0.5) continue;
+        const is50 = s % 50 === 0;
+        hudCtx.beginPath();
+        hudCtx.moveTo(spdX + 14, y);
+        hudCtx.lineTo(spdX + 14 + (is50 ? 10 : 5), y);
+        hudCtx.stroke();
+        if (is50) {
+            hudCtx.textAlign = 'left';
+            hudCtx.fillText(`${s}`, spdX + 28, y);
+        }
+    }
+
+    // ---- Altitude tape (right) ----
+    const altX = W * 0.4;
+    const altCenter = alt;
+    hudCtx.font = 'bold 16px monospace';
+    hudCtx.strokeRect(altX - 14, -14, 44, 28);
+    hudCtx.textAlign = 'center';
+    hudCtx.fillText(`${Math.round(alt)}`, altX + 8, 1);
+    hudCtx.font = '13px monospace';
+    for (let a = Math.floor((altCenter - HUD_TAPE_HALF * 2.5) / 100) * 100; a <= altCenter + HUD_TAPE_HALF * 2.5; a += 100) {
+        if (a < 0) continue;
+        const y = (altCenter - a) * HUD_ALT_PX;
+        if (Math.abs(y) > HUD_TAPE_HALF * HUD_ALT_PX * 0.5) continue;
+        const is500 = a % 500 === 0;
+        hudCtx.beginPath();
+        hudCtx.moveTo(altX - 14, y);
+        hudCtx.lineTo(altX - 14 - (is500 ? 10 : 5), y);
+        hudCtx.stroke();
+        if (is500) {
+            hudCtx.textAlign = 'right';
+            hudCtx.fillText(`${a}`, altX - 28, y);
+        }
+    }
+
+    // ---- G / AoA ----
+    hudCtx.textAlign = 'left';
+    hudCtx.font = '12px monospace';
+    const leftCol = -W * 0.42;
+    const botRow = H * 0.35;
+    hudCtx.fillText(`G  ${gForce.toFixed(1)}`, leftCol, botRow);
+    hudCtx.fillText(`AoA ${THREE.MathUtils.radToDeg(aoa).toFixed(0)}°`, leftCol, botRow + 16);
+
+    hudCtx.restore();
 }
 
 let _stallStart = 0;
@@ -752,94 +770,135 @@ function stopProfile() {
 }
 document.addEventListener('keydown', (e) => { if (e.code==='F8') { e.preventDefault(); PROFILE.active ? stopProfile() : startProfile(); } });
 
-// ---- wind trail (aircraft path visualisation) ----
-const TRAIL_MAX = 4000;
+// ---- wind trail (smooth tube via CatmullRom) ----
+const TRAIL_MAX = 500;
 let trailEnabled = true;
-let trailCount = 0;
-let trailLine = null;
-const trailPos = new Float32Array(TRAIL_MAX * 3);
-const trailCol = new Float32Array(TRAIL_MAX * 3);
-const trailSiz = new Float32Array(TRAIL_MAX);
+const trailPoints = [];
+let trailMesh = null;
+let trailMaterial = null;
+let trailTex = null;
 
 function initTrail() {
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.BufferAttribute(trailPos, 3));
-    geo.setAttribute('color', new THREE.BufferAttribute(trailCol, 3));
-    geo.setAttribute('aSize', new THREE.BufferAttribute(trailSiz, 1));
-    geo.setDrawRange(0, 0);
-    const mat = new THREE.PointsMaterial({
-        size: 1, vertexColors: true, transparent: true, opacity: 0.9,
-        blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false,
-        sizeAttenuation: true
+    const canvas = document.createElement('canvas');
+    canvas.width = 256;
+    canvas.height = 64;
+    const ctx = canvas.getContext('2d');
+    const grad = ctx.createLinearGradient(0, 0, 256, 0);
+    grad.addColorStop(0, 'rgba(255,255,220,0.08)');
+    grad.addColorStop(0.4, 'rgba(255,255,220,0.15)');
+    grad.addColorStop(0.8, 'rgba(255,255,220,0.35)');
+    grad.addColorStop(1, 'rgba(255,255,220,0.55)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, 256, 64);
+    trailTex = new THREE.CanvasTexture(canvas);
+
+    trailMaterial = new THREE.MeshBasicMaterial({
+        map: trailTex, transparent: true, opacity: 0.65,
+        depthWrite: false, side: THREE.DoubleSide,
+        blending: THREE.AdditiveBlending
     });
-    mat.onBeforeCompile = (shader) => {
-        shader.vertexShader = shader.vertexShader
-            .replace('uniform float size;', 'uniform float size;\nattribute float aSize;')
-            .replace('gl_PointSize = size', 'gl_PointSize = aSize');
-    };
-    trailLine = new THREE.Points(geo, mat);
-    trailLine.frustumCulled = false;
-    trailLine.renderOrder = 999;
-    scene.add(trailLine);
+
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(3), 3));
+    trailMesh = new THREE.Mesh(geo, trailMaterial);
+    trailMesh.frustumCulled = false;
+    trailMesh.renderOrder = 998;
+    scene.add(trailMesh);
 }
 
-function recalcTrailSizes(count) {
-    if (count < 2) return;
-    const step = 13 / (count - 1);
-    for (let i = 0; i < count; i++) trailSiz[i] = 15 - i * step;
+function buildTrailMesh() {
+    if (trailPoints.length < 3) return;
+
+    const curve = new THREE.CatmullRomCurve3(trailPoints);
+    const tubularSegments = Math.min(96, trailPoints.length * 2);
+    const radialSegments = 8;
+    const radiusMin = 0.4;
+    const radiusMax = 12.0;
+
+    const vertCount = (tubularSegments + 1) * (radialSegments + 1);
+    const pos = new Float32Array(vertCount * 3);
+    const uvs = new Float32Array(vertCount * 2);
+    const idx = [];
+
+    const p = new THREE.Vector3();
+    const tan = new THREE.Vector3();
+    const n = new THREE.Vector3();
+    const b = new THREE.Vector3();
+    let up = new THREE.Vector3(0, 1, 0);
+
+    for (let i = 0; i <= tubularSegments; i++) {
+        const t = i / tubularSegments;
+        curve.getPointAt(t, p);
+        curve.getTangentAt(t, tan);
+
+        if (Math.abs(tan.y) > 0.99) up.set(1, 0, 0);
+        else up.set(0, 1, 0);
+        n.crossVectors(up, tan).normalize();
+        b.crossVectors(tan, n).normalize();
+
+        const radius = radiusMin + (1 - t) * (radiusMax - radiusMin);
+
+        for (let j = 0; j <= radialSegments; j++) {
+            const theta = (j / radialSegments) * Math.PI * 2;
+            const sin = Math.sin(theta);
+            const cos = Math.cos(theta);
+            const vi = i * (radialSegments + 1) + j;
+            const i3 = vi * 3;
+            pos[i3] = p.x + (n.x * cos + b.x * sin) * radius;
+            pos[i3 + 1] = p.y + (n.y * cos + b.y * sin) * radius;
+            pos[i3 + 2] = p.z + (n.z * cos + b.z * sin) * radius;
+            uvs[vi * 2] = t;
+            uvs[vi * 2 + 1] = j / radialSegments;
+            if (i < tubularSegments && j < radialSegments) {
+                const a = i * (radialSegments + 1) + j;
+                const b2 = a + radialSegments + 1;
+                idx.push(a, b2, a + 1, b2, b2 + 1, a + 1);
+            }
+        }
+    }
+
+    const newGeo = new THREE.BufferGeometry();
+    newGeo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    newGeo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+    newGeo.setIndex(idx);
+    newGeo.computeVertexNormals();
+
+    if (trailMesh.geometry) trailMesh.geometry.dispose();
+    trailMesh.geometry = newGeo;
 }
 
 function updateTrail() {
-    if (!trailEnabled || !trailLine) return;
-    const plane = getPlane();
-    if (trailCount < TRAIL_MAX) {
-        const tail = trailCount * 3;
-        trailPos[tail] = plane.position.x;
-        trailPos[tail + 1] = plane.position.y;
-        trailPos[tail + 2] = plane.position.z;
-        trailCount++;
-        trailCol[tail] = 1.0;
-        trailCol[tail + 1] = 1.0;
-        trailCol[tail + 2] = 0.6;
-        for (let i = 0; i < tail; i += 3) {
-            trailCol[i] *= 0.97;
-            trailCol[i + 1] *= 0.96;
-            trailCol[i + 2] *= 0.98;
+    if (!trailEnabled) {
+        if (trailMesh && trailMesh.parent) {
+            scene.remove(trailMesh);
+            if (trailMesh.geometry) trailMesh.geometry.dispose();
+            trailMesh = null;
+            trailPoints.length = 0;
         }
-    } else {
-        trailPos.copyWithin(0, 3, TRAIL_MAX * 3);
-        trailCol.copyWithin(0, 3, TRAIL_MAX * 3);
-        trailSiz.copyWithin(0, 1, TRAIL_MAX);
-        const tail = (TRAIL_MAX - 1) * 3;
-        trailPos[tail] = plane.position.x;
-        trailPos[tail + 1] = plane.position.y;
-        trailPos[tail + 2] = plane.position.z;
-        trailCol[tail] = 1.0;
-        trailCol[tail + 1] = 1.0;
-        trailCol[tail + 2] = 0.6;
-        for (let i = 0; i < tail; i += 3) {
-            trailCol[i] *= 0.97;
-            trailCol[i + 1] *= 0.96;
-            trailCol[i + 2] *= 0.98;
-        }
+        return;
     }
-    recalcTrailSizes(trailCount);
-    const posAttr = trailLine.geometry.attributes.position;
-    const colAttr = trailLine.geometry.attributes.color;
-    const sizAttr = trailLine.geometry.attributes.aSize;
-    posAttr.needsUpdate = true;
-    colAttr.needsUpdate = true;
-    sizAttr.needsUpdate = true;
-    trailLine.geometry.setDrawRange(0, trailCount);
+    if (!trailMesh) initTrail();
+
+    const p = getPlane();
+    const offset = new THREE.Vector3(0, 0, 1).applyQuaternion(p.quaternion).multiplyScalar(4);
+    trailPoints.push(p.position.clone().add(offset));
+    while (trailPoints.length > TRAIL_MAX) trailPoints.shift();
+
+    buildTrailMesh();
 }
 
 function toggleTrail() {
     trailEnabled = !trailEnabled;
     if (trailEnabled) {
-        if (!trailLine) initTrail();
-        else scene.add(trailLine);
+        trailPoints.length = 0;
+        if (!trailMesh) initTrail();
+        else scene.add(trailMesh);
     } else {
-        if (trailLine) scene.remove(trailLine);
+        if (trailMesh) {
+            scene.remove(trailMesh);
+            if (trailMesh.geometry) trailMesh.geometry.dispose();
+            trailMesh = null;
+        }
     }
 }
 
@@ -1007,7 +1066,7 @@ function animate() {
 
     // 7. Post-Render UI Updates
     updateDebug(dt * 1000);
-    updateFlightInstrument();
+    updateHUD();
     updateStallWarning();
     updateGForceEffect();
 }

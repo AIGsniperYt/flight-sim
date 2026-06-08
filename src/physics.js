@@ -136,7 +136,7 @@ const totalForce = new THREE.Vector3();
 const inverseQuaternion = new THREE.Quaternion();
 const debugArrowOrigin = new THREE.Vector3();
 
-let debugVectorArrowsVisible = true;
+let debugVectorArrowsVisible = false;
 let _physicsTime = 0;
 let _collisionsEnabled = true;
 let _crashed = false;
