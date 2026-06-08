@@ -535,27 +535,35 @@ function updateHUD() {
     hudCtx.stroke();
     hudCtx.lineWidth = 1;
 
-    // ---- Heading scale ----
+    // ---- Heading scale (wrapped compass) ----
     const hdgY = -H * 0.38;
+    hudCtx.font = '13px monospace';
     hudCtx.textAlign = 'center';
+    const hdgHalfW = HUD_HEADING_RANGE * HUD_HEADING_PX;
+    hudCtx.beginPath();
+    hudCtx.moveTo(-hdgHalfW, hdgY);
+    hudCtx.lineTo(hdgHalfW, hdgY);
+    hudCtx.stroke();
     for (let d = -HUD_HEADING_RANGE; d <= HUD_HEADING_RANGE; d++) {
-        const deg = wrapDegrees(headingDeg + d);
+        const h = headingDeg + d;
+        const deg = ((h % 360) + 360) % 360;
         const x = d * HUD_HEADING_PX;
-        const is10 = deg % 10 === 0;
-        const isCenter = d === 0;
-        if (!is10 && !isCenter) continue;
-        const is30 = deg % 30 === 0;
-        const tickLen = isCenter ? 14 : is30 ? 10 : 5;
+        const rounded = Math.round(deg);
+        const is10 = rounded % 10 === 0;
+        if (!is10) continue;
+        if (d === 0) continue;
+        const is30 = rounded % 30 === 0;
+        const tickLen = is30 ? 10 : 5;
         hudCtx.beginPath();
-        hudCtx.moveTo(x, hdgY - tickLen);
+        hudCtx.moveTo(x, hdgY + tickLen);
         hudCtx.lineTo(x, hdgY);
         hudCtx.stroke();
-        if (is30 || isCenter) {
-            hudCtx.font = isCenter ? 'bold 15px monospace' : '13px monospace';
-            hudCtx.fillText(`${Math.round(deg)}°`, x, hdgY - tickLen - 6);
-            hudCtx.font = '13px monospace';
+        if (is30) {
+            hudCtx.fillText(`${rounded}`, x, hdgY + tickLen + 14);
         }
     }
+    hudCtx.font = 'bold 16px monospace';
+    hudCtx.fillText(`${Math.round(headingDeg)}°`, 0, hdgY - 8);
 
     // ---- Bank arc (moved above pitch ladder, near heading scale) ----
     const bankR = 60;

@@ -8,7 +8,92 @@
 > - `---` between entries.
 
 
-## **08/06/2026 — Wind Trail: Billboard Points → Expanding Cone Geometry**
+## **08/06/2026 — F-16 HUD: Circular Artificial Horizon → Green Combat HUD Canvas Overlay**
+
+**What changed:** Replaced the old CSS circular artificial horizon (sky/ground gradient band, pitch ladder DOM elements, bank ticks, white text readout) with a full-screen `canvas`-based green monochrome HUD - because the old one looked terrible for a flipping f16 jet onboard flight instrument. Pitch ladder scrolls through a fixed centered window, heading compass wraps correctly, and all elements reposition (center vs corner) based on camera mode. Pitch instrument now uses `asin(forward.y)` — wrap-free, stays in [-90, 90].
+
+### 1. Circular instrument removed (`main.js`)
+
+Old DOM: `instrumentDiv` (circular `#111` div, 220px), `horizonBand` (repeating linear-gradient band, 4600px tall), `pitchLadder` (145 DOM elements for -720° to +720°), `aircraftSymbol`/`aircraftDot` (yellow center markers), 12 bank ticks, `bankPointer`, `instrumentReadout`. All replaced by a single `<canvas>`.
+
+```js
+// before: CSS-based circular artificial horizon
+const instrumentDiv = document.createElement('div');
+instrumentDiv.style.borderRadius = '50%';
+const horizonBand = document.createElement('div');
+horizonBand.style.background = ['repeating-linear-gradient(', ...];
+for (let pitchMark = -720; pitchMark <= 720; pitchMark += 10) { ... }
+
+// after: full-screen canvas, cleared every frame
+const hudCanvas = document.createElement('canvas');
+const hudCtx = hudCanvas.getContext('2d');
+hudCtx.clearRect(0, 0, W, H);  // per frame
+```
+
+### 2. Pitch uses `asin(forward.y)` — no wrap (`main.js`)
+
+Old: `atan2(forward.y, up.y)` + `wrapSignedDegrees()` produced values 0→180 (ground at 180). New: `asin(clamp(forward.y))` keeps pitch in [-90, 90] natively — past 90° nose-up it comes back down through 80, 70... as the plane goes inverted.
+
+```js
+// before: wrapped through 180
+const pitchDeg = THREE.MathUtils.radToDeg(Math.atan2(instrumentForward.y, instrumentUp.y));
+const wrappedPitchDeg = wrapSignedDegrees(pitchDeg);  // 0→100→180
+
+// after: natural asin, no wrap needed
+const pitchDeg = THREE.MathUtils.radToDeg(Math.asin(THREE.MathUtils.clamp(hudForward.y, -1, 1)));  // 0→90→80→0
+```
+
+### 3. Heading compass float-precision fix (`main.js:547`)
+
+Root cause: `deg % 10 === 0` compared a float remainder against 0. Heading values like `45.123°` produce `45.123 % 10 = 5.123` (not 0), so nearly every tick was skipped — scale appeared frozen. Fix: `Math.round(deg) % 10 !== 0` for reliable integer comparison.
+
+```js
+// before: float modulus — always skips on non-exact headings
+const is10 = deg % 10 === 0;  // 45.123 % 10 = 5.123 ≠ 0
+
+// after: round first, then integer modulus
+const rounded = Math.round(deg);        // 45
+if (rounded % 10 !== 0) continue;       // 45 % 10 = 5 → skip
+```
+
+### 4. Bank indicator angle fix (`main.js:578`)
+
+`flight.bank` is in radians. Old HUD passed it directly to `hudCtx.rotate()` as if degrees — a 0.175 rad (10°) bank rotated by 0.175° (negligible). Fixed with `radToDeg` + `degToRad` round-trip.
+
+```js
+// before: rad→rotate→tiny movement
+hudCtx.rotate(-bankDeg);  // bankDeg was flight.bank (radians)
+
+// after: proper deg→rad conversion
+const bankDeg = THREE.MathUtils.radToDeg(flight.bank);
+hudCtx.rotate(THREE.MathUtils.degToRad(bankDeg));  // 10° → 0.175 rad → correct
+```
+
+### 5. Pitch ladder window + visual tuning (`main.js:499-525`)
+
+Pitch ladder clipped to a fixed 140px half-height window so lines scroll through a centered display rather than pushing the entire HUD. Gap between left/right dashes widened from 50→65, line length capped at 600px, range extended from ±30°→±90° so the 140px window stays filled at any pitch.
+
+```js
+const PITCH_WIN = 140;      // clip lines outside ±140px of center
+const PITCH_GAP = 65;       // center corridor between dashes
+const PITCH_MAX_LEN = 600;  // don't span the whole screen
+```
+
+### Layout summary
+
+| Element | Position | Description |
+|---|---|---|
+| Heading scale | `y = -H * 0.38` | Horizontal line, ticks hang down, 30° labels above, current heading bold on the line |
+| Bank arc | `y = -H * 0.30`, R=60 | Arc above pitch ladder, pointer rotates with bank |
+| Pitch ladder | Center, clipped ±140px | Dashed lines with center gap, 10° labels both sides |
+| Center reticle | Origin | Crosshairs at HUD center |
+| Airspeed tape | Left (`-0.4W`) | Scrollable, current value in box, 50-tick labels |
+| Altitude tape | Right (`+0.4W`) | Scrollable, current value in box, 500-tick labels |
+| G / AoA | Bottom-left | Green monochrome text |
+
+Positioning: center-screen in chase mode, bottom-right (0.55× scale) in orbit mode. **F** toggles visibility.
+
+---
 
 **What changed:** Replaced the 4000-point billboard sprite trail (janky squares, manual color fade loop) with an expanding cone tube built from `CatmullRomCurve3` + custom `BufferGeometry`. Each ring along the trail has a different radius — 0.4 at the plane (engine exhaust) widening to 4.0 at the tail (dissipating cloud). UV gradient fades the old wide end near-transparent via a canvas texture. No scrolling to avoid banding.
 
