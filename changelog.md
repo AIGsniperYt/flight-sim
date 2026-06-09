@@ -8,6 +8,32 @@
 > - `---` between entries.
 
 
+## **10/06/2026 — G-force body simulation**
+
+**What changed:** Camera now shifts in local space based on acceleration, simulating the pilot's body reacting to G-forces. The acceleration vector is transformed to aircraft-local space, then used to compute a camera offset, smoothed with exponential lerp at rate 12.
+
+**Mapping:**
+- Pull-up (+Y local accel) → camera drops down (pilot sinks into seat)
+- Forward acceleration (+Z) → camera shifts back (pushed into seatback)
+- Turn/lateral (X) → camera leans opposite the turn
+- Dive/decel (negative) → camera lifts / lurches forward
+
+Clamped: ±0.6 units lateral/vertical, ±1.2 fore-aft. Scale: 0.04 units per m/s².
+
+```js
+const gScale = 0.04;
+_gBodyTarget.set(
+    clamp(-localAccel.x * gScale, -0.6, 0.6),  // lateral
+    clamp(-localAccel.y * gScale, -0.6, 0.6),  // vertical
+    clamp(localAccel.z * gScale, -1.2, 1.2)    // fore-aft
+);
+_gBodyOffset.lerp(_gBodyTarget, 1 - Math.exp(-12 * dt));
+const gWorldOffset = _gBodyOffset.clone().applyQuaternion(plane.quaternion);
+camera.position.add(gWorldOffset);
+```
+
+---
+
 ## **10/06/2026 — Afterburner, dynamic FOV, speed pull-back**
 
 ### 1. Afterburner thrust model (`src/physics.js`)

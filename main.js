@@ -63,6 +63,8 @@ const cameraTargetDelta = new THREE.Vector3();
 const defaultCameraOffset = new THREE.Vector3(0, 5, 18);
 const cameraQuat = new THREE.Quaternion();
 const CAM_SLERP_RATE = 20.0;
+const _gBodyOffset = new THREE.Vector3();
+const _gBodyTarget = new THREE.Vector3();
 const freeCamKeys = { w: false, a: false, s: false, d: false, q: false, e: false };
 const freeCamBaseSpeed = 80;
 let freeCamSpeedMul = 1;
@@ -806,6 +808,17 @@ function updateOrbitCamera(dt) {
         const extraPull = Math.min(speed / 300, 1) * 6;
         const backDir = new THREE.Vector3(0, 0, 1).applyQuaternion(plane.quaternion);
         camera.position.addScaledVector(backDir, extraPull);
+        const accel = getFlightState().acceleration;
+        const localAccel = new THREE.Vector3(accel.x, accel.y, accel.z).applyQuaternion(plane.quaternion.clone().invert());
+        const gScale = 0.04;
+        _gBodyTarget.set(
+            THREE.MathUtils.clamp(-localAccel.x * gScale, -0.6, 0.6),
+            THREE.MathUtils.clamp(-localAccel.y * gScale, -0.6, 0.6),
+            THREE.MathUtils.clamp(localAccel.z * gScale, -1.2, 1.2)
+        );
+        _gBodyOffset.lerp(_gBodyTarget, 1 - Math.exp(-12 * dt));
+        const gWorldOffset = _gBodyOffset.clone().applyQuaternion(plane.quaternion);
+        camera.position.add(gWorldOffset);
         cameraQuat.slerp(plane.quaternion, 1 - Math.exp(-CAM_SLERP_RATE * dt));
         camera.quaternion.copy(cameraQuat);
         cameraControls.target.copy(plane.position);
