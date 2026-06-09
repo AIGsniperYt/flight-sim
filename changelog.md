@@ -8,6 +8,25 @@
 > - `---` between entries.
 
 
+## **10/06/2026 — Engine vibration**
+
+**What changed:** Added tiny three-frequency sine vibration to the chase camera, scaled by throttle. Makes the plane feel alive — perfect stillness was fake.
+
+Three sine oscillators at 53 Hz (lateral, 0.3×), 80 Hz (vertical, 1×), and 67 Hz (fore-aft, 0.5×). Max amplitude 0.012 units at full throttle, 0 at idle. Applied as local-space offset, smoothed by nothing (intentionally raw — vibration should be instant).
+
+```js
+_vibTime += dt;
+const vibAmp = 0.012 * thr;
+const vib = new THREE.Vector3(
+    Math.sin(_vibTime * 53 + 1.2) * vibAmp * 0.3,  // lateral
+    Math.sin(_vibTime * 80) * vibAmp,               // vertical (main)
+    Math.sin(_vibTime * 67 + 2.7) * vibAmp * 0.5    // fore-aft
+);
+camera.position.add(vib.clone().applyQuaternion(plane.quaternion));
+```
+
+---
+
 ## **10/06/2026 — G-force body simulation**
 
 **What changed:** Camera now shifts in local space based on acceleration, simulating the pilot's body reacting to G-forces. The acceleration vector is transformed to aircraft-local space, then used to compute a camera offset, smoothed with exponential lerp at rate 12.

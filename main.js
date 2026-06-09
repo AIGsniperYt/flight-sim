@@ -65,6 +65,7 @@ const cameraQuat = new THREE.Quaternion();
 const CAM_SLERP_RATE = 20.0;
 const _gBodyOffset = new THREE.Vector3();
 const _gBodyTarget = new THREE.Vector3();
+let _vibTime = 0;
 const freeCamKeys = { w: false, a: false, s: false, d: false, q: false, e: false };
 const freeCamBaseSpeed = 80;
 let freeCamSpeedMul = 1;
@@ -819,6 +820,14 @@ function updateOrbitCamera(dt) {
         _gBodyOffset.lerp(_gBodyTarget, 1 - Math.exp(-12 * dt));
         const gWorldOffset = _gBodyOffset.clone().applyQuaternion(plane.quaternion);
         camera.position.add(gWorldOffset);
+        _vibTime += dt;
+        const vibAmp = 0.012 * thr;
+        const vib = new THREE.Vector3(
+            Math.sin(_vibTime * 53 + 1.2) * vibAmp * 0.3,
+            Math.sin(_vibTime * 80) * vibAmp,
+            Math.sin(_vibTime * 67 + 2.7) * vibAmp * 0.5
+        );
+        camera.position.add(vib.clone().applyQuaternion(plane.quaternion));
         cameraQuat.slerp(plane.quaternion, 1 - Math.exp(-CAM_SLERP_RATE * dt));
         camera.quaternion.copy(cameraQuat);
         cameraControls.target.copy(plane.position);
