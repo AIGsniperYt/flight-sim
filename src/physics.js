@@ -187,6 +187,7 @@ const flightState = {
     aircraft: { key: '', name: '', description: '' },
     speed: 0, throttle, aoa: 0, sideslip: 0, pitch: 0, bank: 0,
     flightPathAngle: 0, verticalSpeed: 0,
+    afterburner: false,
     rho: AIR_DENSITY_SEA_LEVEL, dynamicPressure: 0,
     cl: 0, linearCl: 0, cd: 0, parasiteCd: 0, inducedCd: 0, highAoACd: 0,
     sideCoefficient: 0, lift: 0, drag: 0, thrust: 0, weight: 0, sideForce: 0,
@@ -451,7 +452,7 @@ export function updatePlane(dt) {
     const throttleInput = _suppressFlightInputs ? 0 : (keyboard['ArrowUp'] ? 1 : 0) + (keyboard['ArrowDown'] ? -1 : 0);
     const controls = AIRCRAFT.controls;
 
-    throttle = THREE.MathUtils.clamp(throttle + throttleInput * dt, 0, 1);
+    throttle = THREE.MathUtils.clamp(throttle + throttleInput * 3.0 * dt, 0, 1);
 
     forward.set(0, 0, -1).applyQuaternion(plane.quaternion).normalize();
     up.set(0, 1, 0).applyQuaternion(plane.quaternion).normalize();
@@ -530,7 +531,16 @@ export function updatePlane(dt) {
     const dragForce = dynamicPressure * AIRCRAFT.wingArea * dragBreakdown.cd;
     const airbrakeOn = keyboard['Space'];
     const airbrakeDrag = airbrakeOn ? dynamicPressure * AIRBRAKE_AREA * 1.0 : 0;
-    const thrustForce = throttle * AIRCRAFT.maxThrust;
+    const _milPower = 76000;
+    const _abMult = 1.7;
+    const _abThresh = 0.85;
+    let thrustForce;
+    if (throttle <= _abThresh) {
+        thrustForce = (throttle / _abThresh) * _milPower;
+    } else {
+        const abFrac = (throttle - _abThresh) / (1 - _abThresh);
+        thrustForce = _milPower + abFrac * (_milPower * (_abMult - 1));
+    }
     const weightForce = AIRCRAFT.mass * GRAVITY;
     const sideCoefficient = THREE.MathUtils.clamp(-AIRCRAFT.sideForceSlope * sideslip, -1.5, 1.5);
     const sideForceMag = dynamicPressure * AIRCRAFT.sideArea * sideCoefficient;
@@ -616,6 +626,7 @@ export function updatePlane(dt) {
 
     flightState.speed = speed;
     flightState.throttle = throttle;
+    flightState.afterburner = throttle > _abThresh;
     flightState.aoa = aoa;
     flightState.sideslip = sideslip;
     flightState.pitch = Math.asin(THREE.MathUtils.clamp(forward.y, -1, 1));
@@ -651,7 +662,7 @@ export function updatePlane(dt) {
     writeVector(flightState.totalForce, totalForce);
     flightState.formulas.lift = `L = q*S*CL = ${dynamicPressure.toFixed(1)}*${AIRCRAFT.wingArea.toFixed(1)}*${liftCoefficient.cl.toFixed(3)} = ${liftForce.toFixed(1)} N`;
     flightState.formulas.drag = `D = q*S*CD = ${dynamicPressure.toFixed(1)}*${AIRCRAFT.wingArea.toFixed(1)}*${dragBreakdown.cd.toFixed(3)} = ${dragForce.toFixed(1)} N${airbrakeOn ? ` + airbrake ${airbrakeDrag.toFixed(1)} N` : ''}${airflowDrag > 0 ? ` + airflow ${airflowDrag.toFixed(1)} N (turn ${turnDrag.toFixed(1)}, align ${misalignmentDrag.toFixed(1)}, G ${gDrag.toFixed(1)})` : ''}`;
-    flightState.formulas.thrust = `T = throttle*Tmax = ${throttle.toFixed(2)}*${AIRCRAFT.maxThrust.toFixed(0)} = ${thrustForce.toFixed(1)} N`;
+    flightState.formulas.thrust = `T = ${throttle > _abThresh ? 'AB+' : ''}${thrustForce.toFixed(0)} N (mil ${(_milPower/1000).toFixed(0)}kN × ${throttle > _abThresh ? `AB ${((_milPower*(_abMult-1))/1000).toFixed(0)}kN` : (throttle/_abThresh).toFixed(2)})`;
     flightState.formulas.weight = `W = m*g = ${AIRCRAFT.mass.toFixed(0)}*${GRAVITY.toFixed(2)} = ${weightForce.toFixed(1)} N`;
     flightState.formulas.sideForce = `Y = q*Sside*CY = ${dynamicPressure.toFixed(1)}*${AIRCRAFT.sideArea.toFixed(1)}*${sideCoefficient.toFixed(3)} = ${sideForceMag.toFixed(1)} N`;
     flightState.formulas.acceleration = `a_total = F/m + alignment = (${totalForce.x.toFixed(1)}, ${totalForce.y.toFixed(1)}, ${totalForce.z.toFixed(1)})/${AIRCRAFT.mass.toFixed(0)} → (${acceleration.x.toFixed(2)}, ${acceleration.y.toFixed(2)}, ${acceleration.z.toFixed(2)}) m/s^2`;

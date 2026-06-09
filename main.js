@@ -709,7 +709,7 @@ function updateHUD() {
     hudCtx.font = 'bold 16px monospace';
     hudCtx.textAlign = 'center';
     hudCtx.textBaseline = 'top';
-    hudCtx.fillText(`${Math.round(flight.throttle * 100)}%`, thrX, thrBase + 8);
+    hudCtx.fillText(`${Math.round(flight.throttle * 100)}%${flight.afterburner ? ' AB' : ''}`, thrX, thrBase + 8);
 }
 
 let _stallStart = 0;
@@ -794,8 +794,9 @@ let _currentFov = 75;
 function updateOrbitCamera(dt) {
     const plane = getPlane();
     const speed = getFlightState().speed;
-    const targetFov = 60 + Math.min(speed / 250, 1) * 40;
-    _currentFov += (targetFov - _currentFov) * (1 - Math.exp(-4 * dt));
+    const thr = getFlightState().throttle;
+    const targetFov = 60 + Math.min(speed / 250, 1) * 30 + thr * 20;
+    _currentFov += (targetFov - _currentFov) * (1 - Math.exp(-8 * dt));
     camera.fov = _currentFov;
     camera.updateProjectionMatrix();
 
