@@ -8,6 +8,25 @@
 > - `---` between entries.
 
 
+## **09/06/2026 — Camera slerp inertia (chase cam)**
+
+**What changed:** Chase camera rotation now uses quaternion slerp instead of instant `copy()`. The camera quaternion lives in a persistent `cameraQuat` variable, slerped toward the plane each frame at `CAM_SLERP_RATE = 20`. Exponential decay `1 - exp(-rate * dt)` keeps it frame-rate independent.
+
+At rate 20, the camera catches up to ~95% of the plane's rotation within ~150ms — enough to feel weighty without disorientation. Lower rates (tried 4.0) caused excessive floatiness where the camera would lag a full second behind, making maneuvers unclear.
+
+```js
+// before: camera snaps to plane rotation instantly
+camera.quaternion.copy(plane.quaternion);
+
+// after: camera lags behind with slerp
+cameraQuat.slerp(plane.quaternion, 1 - Math.exp(-CAM_SLERP_RATE * dt));
+camera.quaternion.copy(cameraQuat);
+```
+
+`cameraQuat` is initialized to match the plane in `resetChaseCamera()` so there's no initial snap on mode switch.
+
+---
+
 ## **08/06/2026 — Near LOD disabled, LOD geometry stats in debug**
 
 **What changed:** Three small optimisations and debug improvements.

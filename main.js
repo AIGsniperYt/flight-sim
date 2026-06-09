@@ -60,6 +60,8 @@ const viewProjectionMatrix = new THREE.Matrix4();
 const cameraFollowTarget = new THREE.Vector3().copy(getPlane().position);
 const cameraTargetDelta = new THREE.Vector3();
 const defaultCameraOffset = new THREE.Vector3(0, 5, 18);
+const cameraQuat = new THREE.Quaternion();
+const CAM_SLERP_RATE = 20.0;
 const freeCamKeys = { w: false, a: false, s: false, d: false, q: false, e: false };
 const freeCamBaseSpeed = 80;
 let freeCamSpeedMul = 1;
@@ -88,6 +90,7 @@ function resetChaseCamera() {
     cameraControls.target.copy(plane.position);
     cameraFollowTarget.copy(plane.position);
     camera.quaternion.copy(plane.quaternion);
+    cameraQuat.copy(plane.quaternion);
 }
 
 function enterOrbitCamera() {
@@ -737,7 +740,8 @@ function updateOrbitCamera(dt) {
     if (cameraMode === 'chase') {
         const worldOffset = defaultCameraOffset.clone().applyQuaternion(plane.quaternion);
         camera.position.copy(plane.position).add(worldOffset);
-        camera.quaternion.copy(plane.quaternion);
+        cameraQuat.slerp(plane.quaternion, 1 - Math.exp(-CAM_SLERP_RATE * dt));
+        camera.quaternion.copy(cameraQuat);
         cameraControls.target.copy(plane.position);
         cameraFollowTarget.copy(plane.position);
         return;
