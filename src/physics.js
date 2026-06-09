@@ -580,7 +580,12 @@ export function updatePlane(dt) {
     const postAccelerationSpeed = velocity.length();
     if (postAccelerationSpeed > 0.001) {
         desiredVelocity.copy(forward).multiplyScalar(postAccelerationSpeed);
-        velocity.lerp(desiredVelocity, Math.min(1, dt * AERO_FEEL.alignmentRate));
+        const absAoA = Math.abs(aoa);
+        const stallDepth = absAoA > AIRCRAFT.stallAoA
+            ? THREE.MathUtils.clamp((absAoA - AIRCRAFT.stallAoA) / AIRCRAFT.postStallFadeAngle, 0, 1)
+            : 0;
+        const effectiveRate = AERO_FEEL.alignmentRate * (1 - stallDepth);
+        velocity.lerp(desiredVelocity, Math.min(1, dt * effectiveRate));
     }
     // G-force must reflect total acceleration (forces + alignment), not just forces
     acceleration.copy(velocity).sub(velBeforeAlign).divideScalar(dt);

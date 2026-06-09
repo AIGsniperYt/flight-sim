@@ -393,6 +393,18 @@ document.addEventListener('keydown', (event) => {
             combat.fireMachineGun(origin, dir.clone().add(spread).normalize());
         }
         console.log('Bullets fired');
+    } else if (event.code === 'KeyY' && !event.ctrlKey && !event.metaKey) {
+        event.preventDefault();
+        const p = getPlane().position;
+        const heading = Math.random() * Math.PI * 2;
+        const dist = 300 + Math.random() * 500;
+        const spawnPos = new THREE.Vector3(
+            p.x + Math.sin(heading) * dist,
+            p.y + (Math.random() - 0.5) * 100,
+            p.z + Math.cos(heading) * dist
+        );
+        combat.spawnEnemy(spawnPos, heading + Math.PI);
+        console.log(`Enemy spawned at (${spawnPos.x.toFixed(0)}, ${spawnPos.z.toFixed(0)})`);
     }
 
     if (cameraMode === 'freecam') {
@@ -525,7 +537,7 @@ function updateDebug(dt) {
             Vector Arrows: ${debugArrowsVisible ? 'on' : 'off'}<br>
             Forces/Motion: ${debugVectorLegend}<br>
             Wind Trail: <b>T</b> ${trailEnabled ? 'ON' : 'OFF'} (${trailPoints.length} pts)<br>
-            Combat: ${combat.getMissileCount()} mis ${combat.getBulletCount()} bul<br>
+            Combat: ${combat.getMissileCount()} mis ${combat.getBulletCount()} bul ${combat.getEnemyCount()} ene<br>
             <br>
             Memory: ${memUsage}
         `;
@@ -719,6 +731,62 @@ function updateHUD() {
     hudCtx.fillText(`AoA ${THREE.MathUtils.radToDeg(aoa).toFixed(0)}°`, leftCol, botRow + 16);
 
     hudCtx.restore();
+
+    // ---- Radar (screen coords, bottom-left) ----
+    const radarR = 65;
+    const radarX = radarR + 15;
+    const radarY = H - radarR - 15;
+    const radarRange = 800;
+    hudCtx.strokeStyle = '#0f0';
+    hudCtx.fillStyle = '#0f0';
+    hudCtx.lineWidth = 0.5;
+    hudCtx.beginPath();
+    hudCtx.arc(radarX, radarY, radarR, 0, Math.PI * 2);
+    hudCtx.stroke();
+    hudCtx.beginPath();
+    hudCtx.arc(radarX, radarY, radarR * 0.5, 0, Math.PI * 2);
+    hudCtx.stroke();
+    const fwdAngle = Math.atan2(hudForward.x, -hudForward.z);
+    hudCtx.lineWidth = 1.5;
+    hudCtx.beginPath();
+    hudCtx.moveTo(radarX, radarY - radarR);
+    hudCtx.lineTo(radarX, radarY - radarR - 8);
+    hudCtx.stroke();
+    const enemies = combat.getEnemyPositions();
+    const projs = combat.getProjectilePositions();
+    for (const ep of enemies) {
+        const dx = ep.x - plane.position.x;
+        const dz = ep.z - plane.position.z;
+        const dist = Math.sqrt(dx * dx + dz * dz);
+        if (dist > radarRange) continue;
+        const angle = Math.atan2(dx, dz) - fwdAngle;
+        const r = (dist / radarRange) * radarR;
+        const px = radarX + Math.sin(angle) * r;
+        const py = radarY - Math.cos(angle) * r;
+        hudCtx.fillStyle = '#f00';
+        hudCtx.beginPath();
+        hudCtx.arc(px, py, 3, 0, Math.PI * 2);
+        hudCtx.fill();
+    }
+    for (const pp of projs) {
+        const dx = pp.x - plane.position.x;
+        const dz = pp.z - plane.position.z;
+        const dist = Math.sqrt(dx * dx + dz * dz);
+        if (dist > radarRange) continue;
+        const angle = Math.atan2(dx, dz) - fwdAngle;
+        const r = (dist / radarRange) * radarR;
+        const px = radarX + Math.sin(angle) * r;
+        const py = radarY - Math.cos(angle) * r;
+        hudCtx.fillStyle = '#fff';
+        hudCtx.beginPath();
+        hudCtx.arc(px, py, 1.5, 0, Math.PI * 2);
+        hudCtx.fill();
+    }
+    hudCtx.fillStyle = '#0f0';
+    hudCtx.font = '8px monospace';
+    hudCtx.textAlign = 'center';
+    hudCtx.textBaseline = 'top';
+    hudCtx.fillText(`${radarRange}m`, radarX, radarY + radarR + 4);
 
     // ---- Throttle slider (screen coords, bottom-right, draggable) ----
     const thrX = W - _thrConf.xOff;

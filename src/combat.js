@@ -160,6 +160,16 @@ export function update(dt) {
         }
     }
 
+    // Enemies
+    for (const e of _enemies) {
+        const dir = new THREE.Vector3(0, 0, -1).applyAxisAngle(new THREE.Vector3(0, 1, 0), e.heading);
+        e.mesh.position.addScaledVector(dir, e.speed * dt);
+        const terrainY = getHeightScaled(e.mesh.position.x, e.mesh.position.z, 1.0);
+        e.mesh.position.y = terrainY + 200 + Math.sin(performance.now() * 0.001 + e.mesh.id) * 30;
+        e.heading += Math.sin(performance.now() * 0.0005 + e.mesh.id * 3) * 0.2 * dt;
+        e.mesh.rotation.y = e.heading;
+    }
+
     // Explosion particles
     for (let i = _explosions.length - 1; i >= 0; i--) {
         const e = _explosions[i];
@@ -185,5 +195,30 @@ export function update(dt) {
     }
 }
 
+// ---- Enemy planes ----
+const _enemyGeom = new THREE.ConeGeometry(1.5, 5, 6);
+const _enemyMat = new THREE.MeshBasicMaterial({ color: 0xff3333 });
+let _enemies = [];
+
+export function spawnEnemy(position, heading) {
+    const mesh = new THREE.Mesh(_enemyGeom, _enemyMat);
+    mesh.position.copy(position);
+    mesh.rotation.y = heading;
+    _group.add(mesh);
+    _enemies.push({ mesh, heading, speed: 150 + Math.random() * 80 });
+}
+
+export function getEnemyPositions() {
+    return _enemies.map(e => e.mesh.position.clone());
+}
+
+export function getProjectilePositions() {
+    const out = [];
+    for (const m of _missiles) out.push(m.mesh.position.clone());
+    for (const b of _bullets) out.push(b.mesh.position.clone());
+    return out;
+}
+
 export function getMissileCount() { return _missiles.length; }
 export function getBulletCount() { return _bullets.length; }
+export function getEnemyCount() { return _enemies.length; }

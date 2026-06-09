@@ -8,6 +8,67 @@
 > - `---` between entries.
 
 
+## **09/06/2026 — Fix: Stall Alignment Overpowering Gravity (Recurrence of 06/06/2026 Bug)**
+
+### 1. Velocity alignment during stall cancels gravity (`src/physics.js`)
+
+**Bug:** Nosing up at 0 throttle produced negligible vertical drop (~-1.8 m/s cap) instead of plummeting. Total force debug arrow pointed down correctly, but acceleration arrow pointed up — the plane bobbed in midair at equilibrium.
+
+**Cause:** `alignmentRate: 2.5` pulls ~4% of velocity toward the nose every frame at 60fps (line 583, `velocity.lerp(desiredVelocity, …)`). In a stall with the nose pitched up, this systematically cancels gravity's downward acceleration. Same root cause as the 06/06/2026 fix (which dropped the rate from 4.0→0.5), but alignmentRate was later raised back to 2.5 for feel, reintroducing the bug.
+
+**Fix:** The alignment rate is now scaled by a stall factor — full strength in normal flight, linearly fading to zero as AoA progresses past stallAoA through `postStallFadeAngle`. Deep stall (AoA ≥ stallAoA + postStallFadeAngle) gets zero alignment, so gravity dominates and the plane falls realistically. Non-stalled flight feel is preserved.
+
+```js
+// before (physics.js:581-584)
+velocity.addScaledVector(acceleration, dt);
+const velBeforeAlign = velocity.clone();
+const postAccelerationSpeed = velocity.length();
+if (postAccelerationSpeed > 0.001) {
+    desiredVelocity.copy(forward).multiplyScalar(postAccelerationSpeed);
+    velocity.lerp(desiredVelocity, Math.min(1, dt * AERO_FEEL.alignmentRate));
+}
+
+// after — alignment fades during stall
+velocity.addScaledVector(acceleration, dt);
+const velBeforeAlign = velocity.clone();
+const postAccelerationSpeed = velocity.length();
+if (postAccelerationSpeed > 0.001) {
+    desiredVelocity.copy(forward).multiplyScalar(postAccelerationSpeed);
+    const absAoA = Math.abs(aoa);
+    const stallDepth = absAoA > AIRCRAFT.stallAoA
+        ? THREE.MathUtils.clamp((absAoA - AIRCRAFT.stallAoA) / AIRCRAFT.postStallFadeAngle, 0, 1)
+        : 0;
+    const effectiveRate = AERO_FEEL.alignmentRate * (1 - stallDepth);
+    velocity.lerp(desiredVelocity, Math.min(1, dt * effectiveRate));
+}
+```
+
+`effectiveRate` values per flight regime (F-16, stallAoA=24°, postStallFadeAngle=15°):
+| AoA | Regime | effectiveRate |
+|-----|--------|--------------|
+| ≤24° | Normal flight | 2.5 (unchanged) |
+| 30° | Stall entry | 2.5 × (1 − 0.4) = 1.5 |
+| 39°+ | Deep stall | 0 (gravity only) |
+
+---
+
+## **10/06/2026 — Enemy planes + radar**
+
+### 1. Enemy planes (`src/combat.js`)
+**Y** key spawns an enemy plane 300–800m away at a random heading. Enemy is a red cone mesh that flies at 150–230 m/s, maintains 200m AGL with slight sinusoidal altitude variation, and gently banks left/right (sin-based heading drift). Enemy data exposed via `getEnemyPositions()` for radar. No weapons yet — they're target practice.
+
+```js
+combat.spawnEnemy(position, heading);
+```
+
+### 2. Radar display (`main.js` HUD)
+Bottom-left 65px-radius radar circle with 800m range. Two range rings (50% and 100%). Heading marker at top. Enemies shown as 3px red dots, missiles/bullets as 1.5px white dots. All positions transformed to player-relative polar coordinates (range + bearing from player heading). Range label below the circle.
+
+### 3. Projectile tracking (`src/combat.js`)
+New `getProjectilePositions()` returns positions of all active missiles and bullets for radar display.
+
+---
+
 ## **10/06/2026 — Auto-fire, missile explosions, bullet fixes**
 
 ### 1. Auto-fire for machine gun (`main.js`, `combat.js`)
