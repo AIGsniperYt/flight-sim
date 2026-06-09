@@ -63,6 +63,8 @@ const viewProjectionMatrix = new THREE.Matrix4();
 const cameraFollowTarget = new THREE.Vector3().copy(getPlane().position);
 const cameraTargetDelta = new THREE.Vector3();
 const defaultCameraOffset = new THREE.Vector3(0, 5, 18);
+const _autoDir = new THREE.Vector3();
+const _autoOrigin = new THREE.Vector3();
 const cameraQuat = new THREE.Quaternion();
 const CAM_SLERP_RATE = 20.0;
 const _gBodyOffset = new THREE.Vector3();
@@ -369,12 +371,6 @@ document.addEventListener('keydown', (event) => {
         event.preventDefault();
         toggleTrail();
         console.log(`Wind trail: ${trailEnabled ? 'ON' : 'OFF'}`);
-    } else if (event.code === 'KeyB' && !event.ctrlKey && !event.metaKey) {
-        event.preventDefault();
-        const p = getPlane().position.clone();
-        p.y = getHeightScaled(p.x, p.z, 1.0);
-        combat.explode(p, 40, 20);
-        console.log(`Explosion at (${p.x.toFixed(0)}, ${p.z.toFixed(0)}) ground ${p.y.toFixed(0)}`);
     } else if (event.code === 'KeyF' && !event.ctrlKey && !event.metaKey) {
         event.preventDefault();
         const plane = getPlane();
@@ -382,6 +378,21 @@ document.addEventListener('keydown', (event) => {
         const origin = plane.position.clone().addScaledVector(dir, 10);
         combat.fireMissile(origin, dir, plane.quaternion.clone());
         console.log('Missile fired');
+    } else if (event.code === 'KeyV' && !event.ctrlKey && !event.metaKey) {
+        event.preventDefault();
+        combat.setTriggerHeld(true);
+        const plane = getPlane();
+        const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(plane.quaternion);
+        const origin = plane.position.clone().addScaledVector(dir, 12);
+        for (let i = 0; i < 5; i++) {
+            const spread = new THREE.Vector3(
+                (Math.random() - 0.5) * 0.02,
+                (Math.random() - 0.5) * 0.02,
+                0
+            ).applyQuaternion(plane.quaternion);
+            combat.fireMachineGun(origin, dir.clone().add(spread).normalize());
+        }
+        console.log('Bullets fired');
     }
 
     if (cameraMode === 'freecam') {
@@ -405,6 +416,7 @@ document.addEventListener('keyup', (event) => {
         case 'KeyQ': freeCamKeys.q = false; break;
         case 'KeyE': freeCamKeys.e = false; break;
     }
+    if (event.code === 'KeyV') combat.setTriggerHeld(false);
 });
 
 let lastFrameTime = performance.now();
@@ -513,6 +525,7 @@ function updateDebug(dt) {
             Vector Arrows: ${debugArrowsVisible ? 'on' : 'off'}<br>
             Forces/Motion: ${debugVectorLegend}<br>
             Wind Trail: <b>T</b> ${trailEnabled ? 'ON' : 'OFF'} (${trailPoints.length} pts)<br>
+            Combat: ${combat.getMissileCount()} mis ${combat.getBulletCount()} bul<br>
             <br>
             Memory: ${memUsage}
         `;
@@ -1109,6 +1122,7 @@ function updateExplosion() {
 
 onCrash((pos, speed) => {
     createExplosion(pos, speed);
+    combat.explode(pos, 30, 15);
 });
 
 function animate() {
@@ -1140,6 +1154,7 @@ function animate() {
     // 3. World Streamers
     updateChunks(scene, camera, frustum, cameraVelocity.x, cameraVelocity.z);
     combat.update(dt);
+    { const _p = getPlane(); _autoDir.set(0, 0, -1).applyQuaternion(_p.quaternion); _autoOrigin.copy(_p.position).addScaledVector(_autoDir, 12); combat.updateAutoFire(dt, _autoOrigin, _autoDir); }
     const craterData = combat.getCraterArray();
     setCraterData(craterData);
     updateExplosion();

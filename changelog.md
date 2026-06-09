@@ -8,7 +8,23 @@
 > - `---` between entries.
 
 
-## **10/06/2026 — Missiles + key rebinds**
+## **10/06/2026 — Auto-fire, missile explosions, bullet fixes**
+
+### 1. Auto-fire for machine gun (`main.js`, `combat.js`)
+Holding **V** now continuously fires 3-round bursts every 100ms (10 bursts/sec). Key state tracked via `setTriggerHeld(true/false)` in keydown/keyup. `updateAutoFire(dt, origin, dir)` called each frame in the animate loop — reuses persistent `_autoDir`/`_autoOrigin` vectors to avoid allocation.
+
+### 2. Bullet spawn fix (`combat.js`)
+Bullets were spawning 32 units ahead of the plane (12 from main.js origin + 20 from `fireMachineGun`'s internal offset). Removed the internal offset — bullets now spawn exactly at the passed origin (12 units ahead = nose position). Speed increased 800→1200 m/s.
+
+### 3. Missile hit effects (`combat.js`)
+Missiles on terrain impact now get the same yellow/orange additive-blended particle explosion as crash effects (250 particles, size 5, 800ms duration). Crater size increased: radius 25→40, depth 12→20. `spawnExplosion` function lives in combat.js with its own particle update loop in `update()`.
+
+### 4. Explosion particle system (`combat.js`)
+`spawnExplosion(pos, speed)` creates a `THREE.Points` mesh with random velocities, gravity, and fade-out. Managed in `_explosions[]` array, disposed after 800ms. Reuses the combat group (`_group`) so all combat visuals are in one scene container.
+
+---
+
+## **10/06/2026 — Machine gun, crash craters, B key removed**
 
 ### 1. Missile system (`src/combat.js`)
 Missiles are cone meshes fired from 10 units ahead of the plane. Travel at 400 m/s in the direction the plane is facing. Explode into a crater (radius 25, depth 12) on terrain impact or after 6 seconds (3s fuse + 3s flight). Managed via `combat.init(scene)` which creates a shared `THREE.Group` for all combat objects.
