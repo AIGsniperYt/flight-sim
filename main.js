@@ -790,8 +790,14 @@ function updateGForceEffect() {
   }
 }
 
+let _currentFov = 75;
 function updateOrbitCamera(dt) {
     const plane = getPlane();
+    const speed = getFlightState().speed;
+    const targetFov = 60 + Math.min(speed / 250, 1) * 40;
+    _currentFov += (targetFov - _currentFov) * (1 - Math.exp(-4 * dt));
+    camera.fov = _currentFov;
+    camera.updateProjectionMatrix();
 
     if (cameraMode === 'chase') {
         const worldOffset = defaultCameraOffset.clone().applyQuaternion(plane.quaternion);
