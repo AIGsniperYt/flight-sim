@@ -8,6 +8,26 @@
 > - `---` between entries.
 
 
+## **10/06/2026 — Missiles + key rebinds**
+
+### 1. Missile system (`src/combat.js`)
+Missiles are cone meshes fired from 10 units ahead of the plane. Travel at 400 m/s in the direction the plane is facing. Explode into a crater (radius 25, depth 12) on terrain impact or after 6 seconds (3s fuse + 3s flight). Managed via `combat.init(scene)` which creates a shared `THREE.Group` for all combat objects.
+
+```js
+// fire missile: origin, direction, plane quaternion
+combat.fireMissile(origin, dir, plane.quaternion);
+```
+
+### 2. Key rebinds (`main.js`)
+- **HUD toggle**: `F` → `F7` (F was conflicting with missiles)
+- **Fire missile**: `F` key fires a missile at current aim direction
+- **Test explosion**: `B` key now correctly samples terrain height via `getHeightScaled()` before placing the crater (fix: was exploding 650m in the air)
+
+### 3. Explosion fix
+`B` key test explosion was placed at `plane.position.y - 5` while cruising at altitude 650+. The `h > radius * 2` early-return in `explode()` silently cancelled it. Fixed to use `getHeightScaled()` for ground-level placement.
+
+---
+
 ## **10/06/2026 — Explosion craters + combat framework**
 
 **What changed:** Created `src/combat.js` with a crater explosion system, projectile/AI stubs, and wired terrain deformation via vertex shader. **B** key drops a test explosion.

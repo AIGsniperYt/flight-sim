@@ -56,6 +56,7 @@ light.position.set(50, 100, 50).normalize();
 scene.add(light);
 
 initPhysics(scene);
+combat.init(scene);
 
 const frustum = new THREE.Frustum();
 const viewProjectionMatrix = new THREE.Matrix4();
