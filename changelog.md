@@ -8,6 +8,53 @@
 > - `---` between entries.
 
 
+## **10/06/2026 — Afterburner, dynamic FOV, speed pull-back**
+
+### 1. Afterburner thrust model (`src/physics.js`)
+
+Real F-16 has ~76 kN military power (dry) and ~131 kN with afterburner — a 72% jump in the last 15% of throttle travel. Old model scaled thrust linearly: 0.85 throttle = 110 kN, 1.0 = 129 kN (only +17%). New model: below 85% throttle → military power (76 kN linear), above 85% → afterburner adds 53 kN more. Throttle slew rate increased from 1.0/s to 3.0/s so it snaps to full AB in ~0.05s from max. HUD shows "AB" label on the throttle slider when active.
+
+```js
+// before: linear thrust throughout
+const thrustForce = throttle * AIRCRAFT.maxThrust;  // 129kN at full
+
+// after: military power + afterburner kick
+const _milPower = 76000, _abMult = 1.7, _abThresh = 0.85;
+let thrustForce;
+if (throttle <= _abThresh) {
+    thrustForce = (throttle / _abThresh) * _milPower;
+} else {
+    const abFrac = (throttle - _abThresh) / (1 - _abThresh);
+    thrustForce = _milPower + abFrac * (_milPower * (_abMult - 1));  // 129kN at full
+}
+```
+
+### 2. Dynamic FOV now includes throttle (`main.js`)
+
+FOV target changed from `60 + speed/250*40` to `60 + speed/250*30 + throttle*20`. Lerp rate doubled 4→8 so FOV snaps open when you punch the throttle. Throttle contribution adds up to 20° of immediate FOV zoom — the "pushed back in seat" feel.
+
+```js
+// before: speed only
+const targetFov = 60 + Math.min(speed / 250, 1) * 40;
+
+// after: speed + throttle
+const targetFov = 60 + Math.min(speed / 250, 1) * 30 + thr * 20;
+_currentFov += (targetFov - _currentFov) * (1 - Math.exp(-8 * dt));
+```
+
+### 3. Speed-based camera pull-back (`main.js`)
+
+FOV alone felt like a cheap trick. Paired it with position: at high speed the camera pulls an extra 20 units behind the plane (local +Z axis), scaling from 0 at 0 m/s to max at 200+ m/s. Makes the plane look smaller and further away at speed, reinforcing the FOV effect without disorienting lag.
+
+```js
+// after: extra pull-back at speed
+const extraPull = Math.min(speed / 200, 1) * 20;
+const backDir = new THREE.Vector3(0, 0, 1).applyQuaternion(plane.quaternion);
+camera.position.addScaledVector(backDir, extraPull);
+```
+
+---
+
 ## **09/06/2026 — Camera slerp, throttle slider, orbit HUD reposition**
 
 ### 1. Chase camera slerp inertia (`main.js`)

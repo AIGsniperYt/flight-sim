@@ -803,6 +803,9 @@ function updateOrbitCamera(dt) {
     if (cameraMode === 'chase') {
         const worldOffset = defaultCameraOffset.clone().applyQuaternion(plane.quaternion);
         camera.position.copy(plane.position).add(worldOffset);
+        const extraPull = Math.min(speed / 300, 1) * 6;
+        const backDir = new THREE.Vector3(0, 0, 1).applyQuaternion(plane.quaternion);
+        camera.position.addScaledVector(backDir, extraPull);
         cameraQuat.slerp(plane.quaternion, 1 - Math.exp(-CAM_SLERP_RATE * dt));
         camera.quaternion.copy(cameraQuat);
         cameraControls.target.copy(plane.position);
