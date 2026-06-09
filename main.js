@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { updateChunks, getChunkStats, getLodGeometryStats, toggleGapMode, getShowGaps, toggleWireframe, getWireframe } from './src/world.js';
+import { updateChunks, getChunkStats, getLodGeometryStats, toggleGapMode, getShowGaps, toggleWireframe, getWireframe, setCraterData, getMaxCraters } from './src/world.js';
 import { getTerrainStats, getHeightScaled } from './src/terrain.js';
+import * as combat from './src/combat.js';
 import {
     initPhysics,
     updatePlane,
@@ -319,7 +320,7 @@ Object.assign(gForceOverlay.style, {
 document.body.appendChild(gForceOverlay);
 
 document.addEventListener('keydown', (event) => {
-    if (event.code === 'KeyF' && !event.ctrlKey && !event.metaKey) {
+    if (event.code === 'F7' && !event.ctrlKey && !event.metaKey) {
         event.preventDefault();
         hudVisible = !hudVisible;
         hudCanvas.style.display = hudVisible ? 'block' : 'none';
@@ -367,6 +368,19 @@ document.addEventListener('keydown', (event) => {
         event.preventDefault();
         toggleTrail();
         console.log(`Wind trail: ${trailEnabled ? 'ON' : 'OFF'}`);
+    } else if (event.code === 'KeyB' && !event.ctrlKey && !event.metaKey) {
+        event.preventDefault();
+        const p = getPlane().position.clone();
+        p.y = getHeightScaled(p.x, p.z, 1.0);
+        combat.explode(p, 40, 20);
+        console.log(`Explosion at (${p.x.toFixed(0)}, ${p.z.toFixed(0)}) ground ${p.y.toFixed(0)}`);
+    } else if (event.code === 'KeyF' && !event.ctrlKey && !event.metaKey) {
+        event.preventDefault();
+        const plane = getPlane();
+        const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(plane.quaternion);
+        const origin = plane.position.clone().addScaledVector(dir, 10);
+        combat.fireMissile(origin, dir, plane.quaternion.clone());
+        console.log('Missile fired');
     }
 
     if (cameraMode === 'freecam') {
@@ -1124,6 +1138,9 @@ function animate() {
 
     // 3. World Streamers
     updateChunks(scene, camera, frustum, cameraVelocity.x, cameraVelocity.z);
+    combat.update(dt);
+    const craterData = combat.getCraterArray();
+    setCraterData(craterData);
     updateExplosion();
     updateTrail();
 

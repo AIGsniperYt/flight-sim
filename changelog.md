@@ -8,6 +8,42 @@
 > - `---` between entries.
 
 
+## **10/06/2026 — Explosion craters + combat framework**
+
+**What changed:** Created `src/combat.js` with a crater explosion system, projectile/AI stubs, and wired terrain deformation via vertex shader. **B** key drops a test explosion.
+
+### Crater approach
+Instead of modifying vertex buffers (expensive), craters are stored as a flat array of `(x, z, radius, depth)` × 64 and passed to the vertex shader as `uniform vec4[64]`. The `computeHeight` function has a `craterDeform()` term that samples all craters and subtracts a Gaussian depression `depth × exp(-dist² / radius²)`. Crater count stays ≤ 64 — oldest craters evicted when full.
+
+**Vertex shader** (`src/world.js`):
+```glsl
+uniform vec4 uCraters[64];
+float craterDeform(vec2 p) {
+    float d = 0.0;
+    for (int i = 0; i < 64; i++) {
+        vec4 c = uCraters[i];
+        if (c.w == 0.0) continue;
+        float dist = distance(p, c.xy);
+        d -= c.w * exp(-(dist * dist) / (c.z * c.z));
+    }
+    return d;
+}
+```
+
+**Fragment shader**: `varying float vCrater` passed through, darkening terrain near craters (`mix(result, #261408, clamp(-vCrater * 0.3, 0, 0.8))`).
+
+### Combat module (`src/combat.js`)
+- `explode(position, radius, depth)` — creates a crater (no physics push yet, purely terrain deformation)
+- `getCraterArray()` — returns flat 256-float array for uniform upload
+- Stubs: `fireMachineGun()`, `fireMissile()`, `update()` — ready for AI entities and projectiles
+
+### Main.js wiring
+- Imports `* as combat` and `setCraterData`
+- **B** key drops a crater at the plane's position (radius 30, depth 15)
+- `combat.update(dt)` called each frame; crater data uploaded to all terrain materials via `setCraterData()`
+
+---
+
 ## **10/06/2026 — Engine vibration**
 
 **What changed:** Added tiny three-frequency sine vibration to the chase camera, scaled by throttle. Makes the plane feel alive — perfect stillness was fake.

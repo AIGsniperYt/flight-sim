@@ -176,6 +176,18 @@ const _toAdd = [];
 const _toRemove = [];
 let _chunkGenTime = 0, _chunksAdded = 0, _chunksRemoved = 0, _chunksMigrated = 0, _chunksHidden = 0, _chunksUnhidden = 0;
 const _terrainMaterials = [];
+const MAX_CRATERS = 64;
+
+export function setCraterData(flatArray) {
+    for (const m of _terrainMaterials) {
+        const arr = m.userData.craterUniform;
+        if (arr) {
+            for (let i = 0; i < arr.length; i++) arr[i] = flatArray[i];
+        }
+    }
+}
+
+export function getMaxCraters() { return MAX_CRATERS; }
 const _frustumBBox = new THREE.Box3();
 let _frustumDir = null;
 const _camDir = new THREE.Vector3();
@@ -312,9 +324,28 @@ function initMeshes(scene) {
             shader.uniforms.warpScale = { value: 0.002 };
             shader.uniforms.ridgeScale = { value: 0.001 };
             shader.uniforms.moistureScale = { value: 0.002 };
+            const craterArray = new Array(MAX_CRATERS * 4).fill(0);
+            shader.uniforms.uCraters = { value: craterArray };
+            material.userData.craterUniform = craterArray;
+
+            const craterGLSL = `
+                uniform vec4 uCraters[${MAX_CRATERS}];
+                float craterDeform(vec2 p) {
+                    float d = 0.0;
+                    for (int i = 0; i < ${MAX_CRATERS}; i++) {
+                        vec4 c = uCraters[i];
+                        if (c.w == 0.0) continue;
+                        float dist = distance(p, c.xy);
+                        float f = exp(-(dist * dist) / (c.z * c.z));
+                        d -= c.w * f;
+                    }
+                    return d;
+                }
+            `;
 
             shader.vertexShader = `
                 ${simplexNoiseGLSL}
+                ${craterGLSL}
                 uniform float baseScale;
                 uniform float hillScale;
                 uniform float mountainScale;
@@ -331,6 +362,7 @@ function initMeshes(scene) {
                 varying float vBiomeField;
                 varying vec3 vWorldPos;
                 varying vec3 vColor;
+                varying float vCrater;
                 ${shader.vertexShader}
             `;
 
@@ -339,8 +371,11 @@ function initMeshes(scene) {
                 `
                 vec3 transformed = vec3( position );
                 float h = computeHeight(transformed.x, transformed.z, baseScale, hillScale, mountainScale, heightScale, flatnessFactor, hillHeightMultiplier, mountainHeightMultiplier, continentScale, warpScale, ridgeScale);
+                float craterH = craterDeform(transformed.xz);
+                h += craterH;
                 transformed.y = h;
                 vHeight = h;
+                vCrater = craterH;
                 vMoisture = snoise(vec2(transformed.x, transformed.z) * moistureScale) * 0.5 + 0.5;
                 vBiomeField = snoise(vec2(transformed.x, transformed.z) * 0.0001);
                 vWorldPos = vec3(transformed.x, h, transformed.z);
@@ -371,6 +406,7 @@ function initMeshes(scene) {
                 varying float vBiomeField;
                 varying vec3 vWorldPos;
                 varying vec3 vColor;
+                varying float vCrater;
                 ${shader.fragmentShader}
             `;
 
@@ -382,6 +418,8 @@ function initMeshes(scene) {
                 vec3 dz = dFdy(vWorldPos);
                 float rockMix = 1.0 - smoothstep(0.6428, 0.8660, normalize(cross(dx, dz)).y);
                 vec3 result = mix(vColor, vec3(0.420, 0.420, 0.420), rockMix);
+                float craterDark = clamp(-vCrater * 0.3, 0.0, 0.8);
+                result = mix(result, vec3(0.15, 0.12, 0.08), craterDark);
                 if (vHeight < 8.0) result = vec3(0.0, 0.25, 0.45);
                 diffuseColor.rgb = result;
                 `
