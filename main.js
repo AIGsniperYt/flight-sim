@@ -20,7 +20,8 @@ import {
     getDebugVectorLegend,
     setDebugVectorsVisible,
     setSuppressFlightInputs,
-    setFrozen
+    setFrozen,
+    setThrottle
 } from './src/physics.js';
 
 const scene = new THREE.Scene();
@@ -68,6 +69,8 @@ let freeCamSpeedMul = 1;
 let freeCamYaw = 0, freeCamPitch = 0;
 let freeCamMouseDown = false;
 let freeCamLastMX = 0, freeCamLastMY = 0;
+let _thrDragging = false;
+const _thrConf = { len: 200, w: 14, xOff: 60, baseOff: 70, snapDist: 20 };
 const debugVectorLegend = getDebugVectorLegend().map((entry) =>
     `<span style="white-space:nowrap;"><span style="display:inline-block;width:0.8em;height:0.8em;background:${entry.color};margin-right:4px;"></span>${entry.label}</span>`
 ).join(' ');
@@ -133,6 +136,16 @@ document.addEventListener('pointerdown', (event) => {
     }
 });
 
+document.addEventListener('pointerdown', (event) => {
+    if (event.button !== 0 || !isOverThrottle(event.clientX, event.clientY)) return;
+    _thrDragging = true;
+    const W = hudCanvas.width, H = hudCanvas.height;
+    const thrTop = H - _thrConf.baseOff - _thrConf.len;
+    const thrBase = H - _thrConf.baseOff;
+    const t = 1 - (event.clientY - thrTop) / (thrBase - thrTop);
+    setThrottle(t);
+});
+
 document.addEventListener('pointermove', (event) => {
     if (cameraMode === 'freecam' && freeCamMouseDown) {
         freeCamYaw -= (event.clientX - freeCamLastMX) * 0.005;
@@ -145,6 +158,17 @@ document.addEventListener('pointermove', (event) => {
 
 document.addEventListener('pointerup', () => {
     if (cameraMode === 'freecam') freeCamMouseDown = false;
+    _thrDragging = false;
+});
+
+document.addEventListener('pointermove', (event) => {
+    if (!_thrDragging) return;
+    const W = hudCanvas.width, H = hudCanvas.height;
+    const thrX = W - _thrConf.xOff;
+    const thrTop = H - _thrConf.baseOff - _thrConf.len;
+    const thrBase = H - _thrConf.baseOff;
+    const t = 1 - (event.clientY - thrTop) / (thrBase - thrTop);
+    setThrottle(t);
 });
 
 renderer.domElement.addEventListener('wheel', (event) => {
@@ -156,8 +180,18 @@ renderer.domElement.addEventListener('wheel', (event) => {
 resetChaseCamera();
 applyDebugArrowVisibility();
 
+function isOverThrottle(clientX, clientY) {
+    const W = hudCanvas.width, H = hudCanvas.height;
+    const thrX = W - _thrConf.xOff;
+    const thrTop = H - _thrConf.baseOff - _thrConf.len;
+    const thrBase = H - _thrConf.baseOff;
+    const dx = Math.abs(clientX - thrX);
+    const dy = clientY - thrTop;
+    return dx <= _thrConf.snapDist && dy >= -_thrConf.snapDist && dy <= _thrConf.len + _thrConf.snapDist;
+}
+
 renderer.domElement.addEventListener('pointerdown', (event) => {
-    if (event.button <= 2 && cameraMode !== 'freecam') enterOrbitCamera();
+    if (event.button <= 2 && cameraMode !== 'freecam' && !isOverThrottle(event.clientX, event.clientY)) enterOrbitCamera();
 }, true);
 
 const debugDiv = document.createElement('div');
@@ -498,7 +532,7 @@ function updateHUD() {
         cy = H / 2;
         scl = 1;
     } else {
-        cx = W - 130;
+        cx = 130;
         cy = H - 130;
         scl = 0.55;
     }
@@ -654,6 +688,28 @@ function updateHUD() {
     hudCtx.fillText(`AoA ${THREE.MathUtils.radToDeg(aoa).toFixed(0)}°`, leftCol, botRow + 16);
 
     hudCtx.restore();
+
+    // ---- Throttle slider (screen coords, bottom-right, draggable) ----
+    const thrX = W - _thrConf.xOff;
+    const thrBase = H - _thrConf.baseOff;
+    const thrTop = thrBase - _thrConf.len;
+    const thrFill = thrTop + _thrConf.len * (1 - flight.throttle);
+    hudCtx.strokeStyle = '#0f0';
+    hudCtx.fillStyle = '#0f0';
+    hudCtx.lineWidth = 2;
+    hudCtx.beginPath();
+    hudCtx.moveTo(thrX, thrTop);
+    hudCtx.lineTo(thrX, thrBase);
+    hudCtx.stroke();
+    hudCtx.lineWidth = 3;
+    hudCtx.beginPath();
+    hudCtx.moveTo(thrX - _thrConf.w, thrFill);
+    hudCtx.lineTo(thrX + _thrConf.w, thrFill);
+    hudCtx.stroke();
+    hudCtx.font = 'bold 16px monospace';
+    hudCtx.textAlign = 'center';
+    hudCtx.textBaseline = 'top';
+    hudCtx.fillText(`${Math.round(flight.throttle * 100)}%`, thrX, thrBase + 8);
 }
 
 let _stallStart = 0;

@@ -8,22 +8,47 @@
 > - `---` between entries.
 
 
-## **09/06/2026 — Camera slerp inertia (chase cam)**
+## **09/06/2026 — Camera slerp, throttle slider, orbit HUD reposition**
 
-**What changed:** Chase camera rotation now uses quaternion slerp instead of instant `copy()`. The camera quaternion lives in a persistent `cameraQuat` variable, slerped toward the plane each frame at `CAM_SLERP_RATE = 20`. Exponential decay `1 - exp(-rate * dt)` keeps it frame-rate independent.
+### 1. Chase camera slerp inertia (`main.js`)
 
-At rate 20, the camera catches up to ~95% of the plane's rotation within ~150ms — enough to feel weighty without disorientation. Lower rates (tried 4.0) caused excessive floatiness where the camera would lag a full second behind, making maneuvers unclear.
+Camera rotation now uses quaternion slerp instead of instant `copy()`. Persistent `cameraQuat` slerped toward the plane each frame at `CAM_SLERP_RATE = 20` via `1 - exp(-rate * dt)` for frame-rate independence. Catches up ~95% within ~150ms — heavy but not disorienting (rate 4 was too floaty).
 
 ```js
-// before: camera snaps to plane rotation instantly
+// before
 camera.quaternion.copy(plane.quaternion);
 
-// after: camera lags behind with slerp
+// after
 cameraQuat.slerp(plane.quaternion, 1 - Math.exp(-CAM_SLERP_RATE * dt));
 camera.quaternion.copy(cameraQuat);
 ```
 
-`cameraQuat` is initialized to match the plane in `resetChaseCamera()` so there's no initial snap on mode switch.
+### 2. Orbit HUD bottom-left + throttle slider (`main.js`)
+
+Orbit HUD moved from bottom-right to bottom-left so throttle slider can sit at bottom-right permanently. HUD remains compact (0.55× scale) in orbit mode.
+
+**Throttle slider** drawn in screen coordinates after the HUD restore, always bottom-right. 200px vertical track, 14px crossbar, 16px bold percentage label. Draggable — `pointerdown` hit-tests within 20px of the track, `pointermove` maps Y to 0–1 via `setThrottle()` (exported from `physics.js`). `fillStyle` set to `#0f0` after restore to keep text green.
+
+```js
+// throttle slider config (draggable)
+const _thrConf = { len: 200, w: 14, xOff: 60, baseOff: 70, snapDist: 20 };
+
+// pointerdown: hit-test track → start drag
+// pointermove: (clientY - thrTop) / (thrBase - thrTop) → clamp 0–1
+// pointerup: _thrDragging = false
+```
+
+**Fix:** Dragging the throttle was triggering `enterOrbitCamera()` because the renderer's `pointerdown` listener fired on any click on the canvas. Extracted `isOverThrottle()` helper and used it to skip orbit camera activation when the pointer is over the throttle area.
+
+```js
+// before: any right-click on canvas enters orbit mode
+renderer.domElement.addEventListener('pointerdown', (event) => {
+    if (event.button <= 2 && cameraMode !== 'freecam') enterOrbitCamera();
+}, true);
+
+// after: skip if over throttle slider
+if (event.button <= 2 && cameraMode !== 'freecam' && !isOverThrottle(event.clientX, event.clientY)) enterOrbitCamera();
+```
 
 ---
 

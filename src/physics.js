@@ -430,6 +430,7 @@ export function getPhysicsStats() {
     return { physicsTime: _physicsTime };
 }
 
+export function setThrottle(v) { throttle = THREE.MathUtils.clamp(v, 0, 1); }
 export function getCollisionsEnabled() { return _collisionsEnabled; }
 export function setCollisionsEnabled(v) { _collisionsEnabled = v; }
 export function isCrashed() { return _crashed; }
