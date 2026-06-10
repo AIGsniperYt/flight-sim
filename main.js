@@ -921,6 +921,24 @@ function updateHUD(dt) {
                 hudCtx.globalAlpha = 1;
                 hudCtx.shadowBlur = 0;
                 hudCtx.lineWidth = 1;
+
+                // ---- Lead indicator ----
+                const leadPos = combat.getLeadPoint(lockTgtId, plane.position);
+                if (leadPos) {
+                    _projV3.copy(leadPos).project(camera);
+                    if (_projV3.z < 1) {
+                        const lx = (_projV3.x * 0.5 + 0.5) * W;
+                        const ly = (-_projV3.y * 0.5 + 0.5) * H;
+                        hudCtx.strokeStyle = isHard ? 'rgba(0,255,65,0.7)' : 'rgba(0,255,65,0.35)';
+                        hudCtx.lineWidth = 1.5;
+                        hudCtx.beginPath();
+                        hudCtx.arc(lx, ly, 12, 0, Math.PI * 2);
+                        hudCtx.stroke();
+                        hudCtx.beginPath();
+                        hudCtx.arc(lx, ly, 1.5, 0, Math.PI * 2);
+                        hudCtx.fill();
+                    }
+                }
             }
         }
     }

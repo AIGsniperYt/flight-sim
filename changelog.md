@@ -7,7 +7,43 @@
 > - Bugs: problem → cause → fix. Features: show the key before/after.
 > - `---` between entries.
 
-## **10/06/2026 — Hitmarker refinements: green for any hit, red for kill, gap-cross style, flickering lock indicator**
+## **10/06/2026 — Lead indicator + hitmarker refinements + lock flicker**
+
+HOLY MOLY bullets were impossible to hit, I only landed 1 shot after like 20 minutes of trying to shoot literal continous infinite bullets, flipping hell - so I needed to make it easier or atleast show me if I'm even on the right track for my own sanity - I missed even when aiming ahead, once again to reiterate: I only landed **one** bullet.
+
+### 1. Lead computing sight (`src/combat.js`, `main.js`)
+- New `getLeadPoint(enemyId, playerPos)` solves quadratic intercept: `|pp - ep + ev*t| = BULLET_SPEED * t`
+- Enemy velocity estimated from heading + speed (horizontal) and altitude controller (vertical)
+- Returns world-space lead position or `null` (no solution / enemy too close)
+- Draws a green circle (12px radius) + center dot at the projected lead point on HUD
+- Brighter for hard lock (`0.7` alpha), dimmer for soft (`0.35` alpha)
+- Only shows on a locked target
+
+```js
+// combat.js — intercept solver
+const a = vel.dot(vel) - BULLET_SPEED * BULLET_SPEED;
+const b = 2 * _tv1.dot(vel);
+const c = _tv1.dot(_tv1);
+// ... quadratic formula, smallest positive t clamped to 3s
+
+// main.js — lead circle
+hudCtx.arc(lx, ly, 12, 0, Math.PI * 2);
+hudCtx.arc(lx, ly, 1.5, 0, Math.PI * 2); // center dot
+```
+
+### 2. Hitmarkers reworked (`main.js`, `combat.js`)
+- Unified hit detection: both bullets and missile hits trigger the green hitmarker via `_hitThisFrame`
+- New `_killThisFrame` flag set when any player attack kills an enemy
+- Hitmarkers now match crosshair style: each diagonal arm is two disconnected stubs with a center gap, not a solid X
+- Normal hit: green (`#00ff41`), 10px arms, 3px gap, 200ms fade
+- Kill hit: red (`#ff3333`), 18px arms, 5px gap, 350ms fade — larger and longer-lasting
+
+### 3. Lock indicator flicker (`main.js`)
+Rapid opacity oscillation that builds with lock progress. Flicker depth reaches 55% opacity dip on `pow(progress, 1.5)`. Stabilizes on hard lock.
+
+---
+
+## **10/06/2026 — Full combat update: health, lock-on, AI, missiles, RWR, smoke, hit markers**
 
 ### 1. Hitmarkers reworked (`main.js`, `combat.js`)
 - Unified hit detection: both bullets and missile hits trigger the green hitmarker via `_hitThisFrame`

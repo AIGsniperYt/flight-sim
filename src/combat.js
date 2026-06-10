@@ -368,6 +368,44 @@ export function getEnemyHealth(id) {
     return e ? e.hp : 0;
 }
 
+export function getLeadPoint(enemyId, playerPos) {
+    const e = _enemies.find(x => x.id === enemyId);
+    if (!e || !playerPos) return null;
+    const ep = e.mesh.position;
+    _tv1.copy(ep).sub(playerPos);
+    const dist = _tv1.length();
+    if (dist < 250) return null;
+
+    _enemyDir.set(0, 0, -1).applyAxisAngle(_up, e.heading);
+    const vel = _tv2.set(_enemyDir.x * e.speed, 0, _enemyDir.z * e.speed);
+    const terrainY = getHeightScaled(ep.x, ep.z, 1.0);
+    const targetAlt = terrainY + 200 + Math.sin(performance.now() * 0.0007 + e.id * 3) * 40;
+    vel.y = (targetAlt - ep.y) * 2;
+
+    const a = vel.dot(vel) - BULLET_SPEED * BULLET_SPEED;
+    const b = 2 * _tv1.dot(vel);
+    const c = _tv1.dot(_tv1);
+
+    if (Math.abs(a) < 0.0001) {
+        if (Math.abs(b) < 0.0001) return null;
+        const t = -c / b;
+        if (t < 0 || t > 3) return null;
+        return _v3.copy(ep).addScaledVector(vel, t);
+    }
+
+    const disc = b * b - 4 * a * c;
+    if (disc < 0) return null;
+
+    const sqrtDisc = Math.sqrt(disc);
+    let t1 = (-b + sqrtDisc) / (2 * a);
+    let t2 = (-b - sqrtDisc) / (2 * a);
+    if (t1 > t2) { const tmp = t1; t1 = t2; t2 = tmp; }
+    const t = t1 >= 0 ? t1 : t2;
+    if (t < 0 || t > 3) return null;
+
+    return _v3.copy(ep).addScaledVector(vel, t);
+}
+
 export function update(dt, playerPos, playerQuat) {
     const now = performance.now();
     _hitThisFrame = false;
