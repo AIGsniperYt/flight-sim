@@ -65,6 +65,7 @@ const cameraTargetDelta = new THREE.Vector3();
 const defaultCameraOffset = new THREE.Vector3(0, 5, 18);
 const _autoDir = new THREE.Vector3();
 const _autoOrigin = new THREE.Vector3();
+const _projV3 = new THREE.Vector3();
 const cameraQuat = new THREE.Quaternion();
 const CAM_SLERP_RATE = 20.0;
 const _gBodyOffset = new THREE.Vector3();
@@ -90,6 +91,13 @@ let radarAngle = 0;
 const radarSweepSpeed = 2.0;
 const radarContactTimeout = 4;
 const radarContacts = new Map();
+let _hitMarkerTimer = 0;
+let _killHitTimer = 0;
+let _playerDead = false;
+let _playerDeathTime = 0;
+let _lockMode = false;
+let _lockRot = 0;
+let _lockShakeTime = 0;
 
 function applyDebugArrowVisibility() {
     setDebugVectorsVisible(debugVisible && debugArrowsVisible);
@@ -311,6 +319,62 @@ stallSub.style.cssText = `
 
 document.body.appendChild(stallWarning);
 
+const rwrWarning = document.createElement('div');
+rwrWarning.innerHTML = `
+  <div class="rwr-kicker"></div>
+  <div class="rwr-main"></div>
+  <div class="rwr-sub"></div>
+`;
+
+Object.assign(rwrWarning.style, {
+  position: 'fixed',
+  bottom: '34vh',
+  right: '30px',
+  transform: 'translateY(10px) scale(0.95)',
+  transformOrigin: 'center right',
+  color: '#00ff41',
+  fontFamily: 'monospace',
+  textAlign: 'right',
+  letterSpacing: '0.08em',
+  padding: '8px 18px',
+  border: '1px solid rgba(0, 255, 65, 0.25)',
+  background: 'rgba(0, 0, 0, 0.5)',
+  boxShadow: '0 0 20px rgba(0, 255, 65, 0.12), inset 0 0 0 1px rgba(0, 255, 65, 0.06)',
+  zIndex: '10000',
+  pointerEvents: 'none',
+  display: 'none',
+  opacity: '0',
+  transition: 'opacity 100ms linear, transform 100ms linear, box-shadow 100ms linear, border-color 100ms linear',
+  willChange: 'transform, opacity',
+  minWidth: '200px'
+});
+
+const rwrKicker = rwrWarning.querySelector('.rwr-kicker');
+rwrKicker.style.cssText = `
+  font-size: 10px;
+  opacity: 0.6;
+  letter-spacing: 0.35em;
+  margin-bottom: 2px;
+`;
+
+const rwrMain = rwrWarning.querySelector('.rwr-main');
+rwrMain.style.cssText = `
+  font-size: 28px;
+  font-weight: bold;
+  letter-spacing: 0.12em;
+  text-shadow: 0 0 12px rgba(0, 255, 65, 0.35);
+`;
+
+const rwrSub = rwrWarning.querySelector('.rwr-sub');
+rwrSub.style.cssText = `
+  font-size: 11px;
+  opacity: 0.7;
+  letter-spacing: 0.22em;
+  margin-top: 3px;
+`;
+
+document.body.appendChild(rwrWarning);
+
 const gForceOverlay = document.createElement('div');
 gForceOverlay.id = 'g-force-overlay';
 Object.assign(gForceOverlay.style, {
@@ -378,27 +442,48 @@ document.addEventListener('keydown', (event) => {
         console.log(`Wind trail: ${trailEnabled ? 'ON' : 'OFF'}`);
     } else if (event.code === 'KeyF' && !event.ctrlKey && !event.metaKey) {
         event.preventDefault();
-        const plane = getPlane();
-        const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(plane.quaternion);
-        const origin = plane.position.clone().addScaledVector(dir, 10);
-        combat.fireMissile(origin, dir, plane.quaternion.clone());
-        console.log('Missile fired');
+        const planeF = getPlane();
+        const dirF = new THREE.Vector3(0, 0, -1).applyQuaternion(planeF.quaternion);
+        const originF = planeF.position.clone().addScaledVector(dirF, 10);
+        const lockState = combat.getPlayerLockState();
+        const lockTargetId = combat.getPlayerLockTargetId();
+        let missileTarget = null;
+        let missileLockType = 'none';
+        if (lockTargetId !== null && lockState !== 'none') {
+            missileTarget = { enemyId: lockTargetId };
+            missileLockType = lockState;
+        }
+        combat.fireMissile(originF, dirF, planeF.quaternion.clone(), missileTarget, missileLockType);
+        console.log(`Missile fired (lock: ${lockState})`);
+    } else if (event.code === 'KeyL' && !event.ctrlKey && !event.metaKey && !event.repeat) {
+        event.preventDefault();
+        _lockMode = !_lockMode;
+        if (!_lockMode) combat.setPlayerLockTarget(null);
+        console.log(`Lock mode: ${_lockMode ? 'ON' : 'OFF'}`);
     } else if (event.code === 'KeyV' && !event.ctrlKey && !event.metaKey) {
         event.preventDefault();
         combat.setTriggerHeld(true);
         console.log('Auto-fire ON');
     } else if (event.code === 'KeyY' && !event.ctrlKey && !event.metaKey) {
         event.preventDefault();
-        const p = getPlane().position;
-        const heading = Math.random() * Math.PI * 2;
-        const dist = 300 + Math.random() * 500;
-        const spawnPos = new THREE.Vector3(
-            p.x + Math.sin(heading) * dist,
-            p.y + (Math.random() - 0.5) * 100,
-            p.z + Math.cos(heading) * dist
-        );
-        combat.spawnEnemy(spawnPos, heading + Math.PI);
-        console.log(`Enemy spawned at (${spawnPos.x.toFixed(0)}, ${spawnPos.z.toFixed(0)})`);
+        const planeY = getPlane();
+        const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(planeY.quaternion);
+        const dist = 400 + Math.random() * 200;
+        const altOff = (Math.random() - 0.5) * 60;
+        let spawnPos, enemyHeading;
+        if (Math.random() < 0.5) {
+            spawnPos = planeY.position.clone().addScaledVector(fwd, dist);
+            spawnPos.y += altOff;
+            enemyHeading = Math.atan2(-fwd.x, -fwd.z);
+        } else {
+            spawnPos = planeY.position.clone().addScaledVector(fwd, -dist);
+            spawnPos.y += altOff;
+            enemyHeading = Math.atan2(fwd.x, fwd.z);
+        }
+        combat.spawnEnemy(spawnPos, enemyHeading);
+        const dir = spawnPos.clone().sub(planeY.position).normalize();
+        const dot = fwd.dot(dir);
+        console.log(`Enemy spawned ${dot > 0 ? 'AHEAD' : 'BEHIND'} at (${spawnPos.x.toFixed(0)}, ${spawnPos.y.toFixed(0)}, ${spawnPos.z.toFixed(0)})`);
     }
 
     if (cameraMode === 'freecam') {
@@ -724,7 +809,144 @@ function updateHUD(dt) {
     hudCtx.fillText(`G  ${gForce.toFixed(1)}`, leftCol, botRow);
     hudCtx.fillText(`AoA ${THREE.MathUtils.radToDeg(aoa).toFixed(0)}°`, leftCol, botRow + 16);
 
+    // ---- Health bar ----
+    const hpPct = combat.getPlayerHealth() / combat.getMaxPlayerHealth();
+    const hbW = 120;
+    const hbH = 8;
+    const hbY = H * 0.38;
+    hudCtx.strokeStyle = '#0f0';
+    hudCtx.lineWidth = 1;
+    hudCtx.strokeRect(-hbW / 2, hbY, hbW, hbH);
+    hudCtx.fillStyle = hpPct > 0.3 ? '#0f0' : '#f00';
+    hudCtx.fillRect(-hbW / 2 + 1, hbY + 1, (hbW - 2) * hpPct, hbH - 2);
+    hudCtx.font = '9px monospace';
+    hudCtx.textAlign = 'center';
+    hudCtx.textBaseline = 'bottom';
+    hudCtx.fillStyle = '#0f0';
+    hudCtx.fillText(`HP ${Math.round(combat.getPlayerHealth())}`, 0, hbY - 2);
+
+    // ---- Hit markers ----
+    const drawHitMarker = (timer, duration, color, size, gap) => {
+        if (timer > 0) {
+            const alpha = Math.min(1, timer / (duration * 0.3));
+            hudCtx.strokeStyle = color.replace('1)', `${alpha})`);
+            hudCtx.lineWidth = 2;
+            hudCtx.beginPath();
+            hudCtx.moveTo(-size, -size); hudCtx.lineTo(-gap, -gap);
+            hudCtx.moveTo(gap, gap); hudCtx.lineTo(size, size);
+            hudCtx.moveTo(size, -size); hudCtx.lineTo(gap, -gap);
+            hudCtx.moveTo(-gap, gap); hudCtx.lineTo(-size, size);
+            hudCtx.stroke();
+            hudCtx.lineWidth = 1;
+        }
+    };
+    drawHitMarker(_hitMarkerTimer, 0.2, 'rgba(0,255,65,1)', 10, 3);
+    drawHitMarker(_killHitTimer, 0.35, 'rgba(255,51,51,1)', 18, 5);
+
     hudCtx.restore();
+
+    // ---- Lock indicator (converging diamond → square on hard) ----
+    const lockTgtId = combat.getPlayerLockTargetId();
+    if (lockTgtId !== null) {
+        const enemies = combat.getEnemyData();
+        const lockedEp = enemies.find(e => e.id === lockTgtId);
+        if (lockedEp) {
+            _projV3.set(lockedEp.x, lockedEp.y, lockedEp.z).project(camera);
+            if (_projV3.z < 1) {
+                let sx = (_projV3.x * 0.5 + 0.5) * W;
+                let sy = (-_projV3.y * 0.5 + 0.5) * H;
+                const isHard = combat.getPlayerLockState() === 'hard';
+                const lockProgress = Math.min(1, combat.getPlayerLockTimer() / 3.0);
+
+                // Animated rotation — lerps smoothly to π/4 on hard lock
+                const targetRot = isHard ? Math.PI / 4 : 0;
+                _lockRot += (targetRot - _lockRot) * Math.min(1, 6 * dt);
+                const rot = _lockRot;
+
+                // Non-linear convergence: brackets stay spread, snap together at the end
+                const rawFrac = isHard ? 1.0 : lockProgress;
+                const armFrac = 0.1 + 0.9 * Math.pow(rawFrac, 2);
+
+                // Pulsing intensity
+                const t = _lockShakeTime;
+                const pulse = 0.5 + 0.5 * Math.sin(t * (isHard ? 10 : 4 + lockProgress * 6));
+                const lineW = 1.5 + pulse * (isHard ? 1.5 : lockProgress * 1.2);
+                const blurAmt = 2 + pulse * (isHard ? 6 : lockProgress * 4);
+
+                // Shake — increases near hard lock, peaks at moment of convergence
+                const shakeAmt = isHard ? 0 : Math.pow(lockProgress, 3) * 2.5;
+                const jx = Math.sin(t * 25 + 1.7) * shakeAmt;
+                const jy = Math.cos(t * 19 + 0.3) * shakeAmt;
+                sx += jx; sy += jy;
+
+                const S = 22;
+                const cosR = Math.cos(rot), sinR = Math.sin(rot);
+                const rx = (x, y) => sx + x * cosR - y * sinR;
+                const ry = (x, y) => sy + x * sinR + y * cosR;
+
+                const corners = [[0, -S], [S, 0], [0, S], [-S, 0]];
+
+                hudCtx.strokeStyle = '#00ff41';
+                hudCtx.shadowColor = '#00ff41';
+                hudCtx.lineWidth = lineW;
+                hudCtx.shadowBlur = blurAmt;
+
+                // Flicker — rapid opacity oscillation that builds with lock progress
+                const flickerAmt = isHard ? 0 : Math.pow(lockProgress, 1.5) * 0.55;
+                const flicker = 1 - flickerAmt + flickerAmt * (0.5 + 0.5 * Math.sin(t * 50 + Math.sin(t * 17) * 8));
+                hudCtx.globalAlpha = flicker;
+
+                for (let i = 0; i < 4; i++) {
+                    const [cx, cy] = corners[i];
+                    const [n1x, n1y] = corners[(i + 1) % 4];
+                    const [n2x, n2y] = corners[(i + 3) % 4];
+
+                    const mx1 = (cx + n1x) / 2, my1 = (cy + n1y) / 2;
+                    const ax1 = cx + (mx1 - cx) * armFrac;
+                    const ay1 = cy + (my1 - cy) * armFrac;
+                    hudCtx.beginPath();
+                    hudCtx.moveTo(rx(cx, cy), ry(cx, cy));
+                    hudCtx.lineTo(rx(ax1, ay1), ry(ax1, ay1));
+                    hudCtx.stroke();
+
+                    const mx2 = (cx + n2x) / 2, my2 = (cy + n2y) / 2;
+                    const ax2 = cx + (mx2 - cx) * armFrac;
+                    const ay2 = cy + (my2 - cy) * armFrac;
+                    hudCtx.beginPath();
+                    hudCtx.moveTo(rx(cx, cy), ry(cx, cy));
+                    hudCtx.lineTo(rx(ax2, ay2), ry(ax2, ay2));
+                    hudCtx.stroke();
+                }
+
+                hudCtx.globalAlpha = 1;
+                hudCtx.shadowBlur = 0;
+                hudCtx.lineWidth = 1;
+            }
+        }
+    }
+
+    // ---- Lock mode status ----
+    if (_lockMode) {
+        hudCtx.font = 'bold 10px monospace';
+        hudCtx.textAlign = 'left';
+        hudCtx.textBaseline = 'bottom';
+        const lockState = combat.getPlayerLockState();
+        const hasTarget = combat.getPlayerLockTargetId() !== null;
+        let lockText, lockColor;
+        if (lockState === 'hard') {
+            lockText = 'LKD HARD';
+            lockColor = '#00ff41';
+        } else if (hasTarget) {
+            const pct = Math.round(Math.min(1, combat.getPlayerLockTimer() / 3.0) * 100);
+            lockText = `LKD ${pct}%`;
+            lockColor = '#00ff41';
+        } else {
+            lockText = 'SCAN';
+            lockColor = 'rgba(0,255,65,0.45)';
+        }
+        hudCtx.fillStyle = lockColor;
+        hudCtx.fillText(lockText, 8, H - 8);
+    }
 
     // ---- Radar (screen coords, bottom-left, scanning) ----
     radarAngle += dt * radarSweepSpeed;
@@ -852,6 +1074,44 @@ function updateHUD(dt) {
         hudCtx.fill();
     }
 
+    // Player lock indicator on radar
+    const lockTargetId = combat.getPlayerLockTargetId();
+    if (lockTargetId !== null) {
+        const lockedEp = enemies.find(e => e.id === lockTargetId);
+        if (lockedEp) {
+            const ldx = lockedEp.x - plane.position.x;
+            const ldz = lockedEp.z - plane.position.z;
+            const ldist = Math.sqrt(ldx * ldx + ldz * ldz);
+            if (ldist <= radarRange) {
+                const langle = Math.atan2(ldx, -ldz) - fwdAngle;
+                const lr = (ldist / radarRange) * radarR;
+                const lpx = radarX + Math.sin(langle) * lr;
+                const lpy = radarY - Math.cos(langle) * lr;
+                const lockState = combat.getPlayerLockState();
+                const isHard = lockState === 'hard';
+                hudCtx.strokeStyle = '#00ff41';
+                hudCtx.lineWidth = isHard ? 2 : 1.5;
+                const hs = isHard ? 6 : 5;
+                if (isHard) {
+                    hudCtx.save();
+                    hudCtx.translate(lpx, lpy);
+                    hudCtx.rotate(Math.PI / 4);
+                    hudCtx.strokeRect(-hs, -hs, hs * 2, hs * 2);
+                    hudCtx.restore();
+                } else {
+                    hudCtx.beginPath();
+                    hudCtx.moveTo(lpx, lpy - hs);
+                    hudCtx.lineTo(lpx + hs, lpy);
+                    hudCtx.lineTo(lpx, lpy + hs);
+                    hudCtx.lineTo(lpx - hs, lpy);
+                    hudCtx.closePath();
+                    hudCtx.stroke();
+                }
+                hudCtx.lineWidth = 1;
+            }
+        }
+    }
+
     // Radar label
     hudCtx.fillStyle = '#0f0';
     hudCtx.font = '8px monospace';
@@ -958,6 +1218,72 @@ function updateGForceEffect() {
   } else {
     gForceOverlay.style.opacity = '0';
   }
+}
+
+let _rwrState = 'none';
+let _rwrStart = 0;
+
+function updateRWR() {
+  const warnings = combat.getLockWarnings();
+  const now = performance.now();
+  const hasHard = warnings.some(w => w.type === 'hard');
+  const hasSoft = warnings.some(w => w.type === 'soft');
+
+  if (!hasHard && !hasSoft) {
+    _rwrState = 'none';
+    rwrWarning.style.display = 'none';
+    rwrWarning.style.opacity = '0';
+    return;
+  }
+
+  const primary = warnings.find(w => w.type === 'hard') || warnings[0];
+  const isHard = primary.type === 'hard';
+
+  if (_rwrState === 'none' || (isHard && _rwrState !== 'hard')) {
+    _rwrStart = now;
+    _rwrState = isHard ? 'hard' : 'soft';
+  }
+
+  const age = now - _rwrStart;
+  const urgency = Math.min(1, age / 1200);
+
+  const bearingDeg = THREE.MathUtils.radToDeg(primary.bearing);
+  const rwrFwd = _projV3.set(0, 0, -1).applyQuaternion(getPlane().quaternion);
+  const headingDegRWR = wrapDegrees(THREE.MathUtils.radToDeg(Math.atan2(rwrFwd.x, -rwrFwd.z)));
+  const relBearing = ((bearingDeg - headingDegRWR) % 360 + 540) % 360 - 180;
+  const dirArrow = relBearing > 10 ? '▶' : (relBearing < -10 ? '◀' : '▲');
+
+  const baseColor = isHard ? '#ff3333' : '#00ff41';
+  const pulse = 0.5 + 0.5 * Math.sin(now * (isHard ? 0.025 : 0.015));
+  const flash = 0.35 + 0.65 * pulse * urgency;
+
+  const jitterX = isHard ? Math.sin(now * 0.1) * (1 + urgency * 2) : 0;
+  const scale = 1 + urgency * 0.04 + pulse * 0.025;
+
+  rwrKicker.textContent = isHard ? 'MISSILE INBOUND' : 'RADAR LOCK';
+  rwrMain.textContent = isHard ? 'HARD LOCK' : 'SOFT LOCK';
+  rwrSub.textContent = `${dirArrow} ${Math.abs(Math.round(relBearing))}° ${relBearing > 0 ? 'RIGHT' : relBearing < 0 ? 'LEFT' : 'DEAD AHEAD'}${isHard ? ' · BREAK' : ''}`;
+
+  rwrWarning.style.display = 'block';
+  rwrWarning.style.opacity = '0.95';
+  rwrWarning.style.transform = `translateX(${jitterX}px) translateY(10px) scale(${scale})`;
+  rwrWarning.style.transformOrigin = 'center right';
+
+  rwrWarning.style.color = baseColor;
+  rwrWarning.style.borderColor = `rgba(${isHard ? '255,51,51' : '0,255,65'}, ${0.25 + flash * 0.5})`;
+  rwrWarning.style.background = `rgba(0, 0, 0, ${0.45 + urgency * 0.15})`;
+  rwrWarning.style.boxShadow = `
+    0 0 ${16 + flash * 28}px rgba(${isHard ? '255,51,51' : '0,255,65'}, ${0.08 + flash * 0.2}),
+    inset 0 0 0 1px rgba(${isHard ? '255,51,51' : '0,255,65'}, ${0.04 + flash * 0.1})
+  `;
+
+  const mainBright = flash > 0.6 ? '#ffffff' : baseColor;
+  rwrMain.style.color = mainBright;
+  rwrMain.style.textShadow = `0 0 ${10 + flash * 16}px rgba(${isHard ? '255,51,51' : '0,255,65'}, ${0.35 + flash * 0.4})`;
+  rwrMain.style.letterSpacing = `${0.12 + urgency * 0.06}em`;
+
+  rwrKicker.style.opacity = String(0.5 + urgency * 0.4);
+  rwrSub.style.opacity = String(0.55 + urgency * 0.4);
 }
 
 let _currentFov = 75;
@@ -1264,6 +1590,10 @@ onCrash((pos, speed) => {
     combat.explode(pos, 30, 15);
 });
 
+combat.onEnemyKill((id, pos) => {
+    combat.explode(pos, 25, 12);
+});
+
 function animate() {
     requestAnimationFrame(animate);
 
@@ -1292,8 +1622,12 @@ function animate() {
 
     // 3. World Streamers
     updateChunks(scene, camera, frustum, cameraVelocity.x, cameraVelocity.z);
-    { const _p = getPlane(); _autoDir.set(0, 0, -1).applyQuaternion(_p.quaternion); _autoOrigin.copy(_p.position).addScaledVector(_autoDir, 12); combat.updateAutoFire(dt, _autoOrigin, _autoDir); }
-    combat.update(dt);
+    { const _p = getPlane(); _autoDir.set(0, 0, -1).applyQuaternion(_p.quaternion); _autoOrigin.copy(_p.position).addScaledVector(_autoDir, 12); combat.updateAutoFire(dt, _autoOrigin, _autoDir); combat.update(dt, _p.position, _p.quaternion); }
+    if (_lockMode) {
+        const _p2 = getPlane();
+        const tgtId = combat.findLockTarget(_p2.position, _p2.quaternion);
+        combat.setPlayerLockTarget(tgtId);
+    }
     const craterData = combat.getCraterArray();
     setCraterData(craterData);
     updateExplosion();
@@ -1305,6 +1639,7 @@ function animate() {
         if (explosionStart > 0 && elapsed > 3000 && !_respawning) {
             _respawning = true;
             resetAircraft();
+            combat.resetPlayer();
             trailPoints.length = 0;
             console.log('Respawned');
         } else if (!_respawning) {
@@ -1312,6 +1647,23 @@ function animate() {
         }
     } else {
         _respawning = false;
+    }
+
+    // Combat death check
+    if (!isCrashed() && combat.getPlayerHealth() <= 0 && !_playerDead) {
+        _playerDead = true;
+        _playerDeathTime = now;
+        const deathPos = getPlane().position.clone();
+        createExplosion(deathPos, 300);
+        combat.explode(deathPos, 50, 25);
+        setFrozen(true);
+    }
+    if (_playerDead && now - _playerDeathTime > 3000) {
+        _playerDead = false;
+        combat.resetPlayer();
+        resetAircraft();
+        trailPoints.length = 0;
+        setFrozen(false);
     }
 
     // 5. FIXED PROFILER — uses actual (unclamped) time for correct FPS
@@ -1353,9 +1705,13 @@ function animate() {
 
     // 7. Post-Render UI Updates
     updateDebug(dt * 1000);
+    _hitMarkerTimer = combat.getHitThisFrame() ? 0.2 : Math.max(0, _hitMarkerTimer - dt);
+    _killHitTimer = combat.getKillThisFrame() ? 0.35 : Math.max(0, _killHitTimer - dt);
+    _lockShakeTime += dt;
     updateHUD(dt);
     updateStallWarning();
     updateGForceEffect();
+    updateRWR();
 }
 
 initTrail();

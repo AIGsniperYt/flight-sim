@@ -7,6 +7,155 @@
 > - Bugs: problem → cause → fix. Features: show the key before/after.
 > - `---` between entries.
 
+## **10/06/2026 — Hitmarker refinements: green for any hit, red for kill, gap-cross style, flickering lock indicator**
+
+### 1. Hitmarkers reworked (`main.js`, `combat.js`)
+- Unified hit detection: both bullets and missile hits trigger the green hitmarker via `_hitThisFrame`
+- New `_killThisFrame` flag set when any player attack kills an enemy
+- Hitmarkers now match crosshair style: each diagonal arm is two disconnected stubs with a center gap, not a solid X
+- Normal hit: green (`#00ff41`), 10px arms, 3px gap, 200ms fade
+- Kill hit: red (`#ff3333`), 18px arms, 5px gap, 350ms fade — larger and longer-lasting
+
+```js
+// Before
+hudCtx.moveTo(-16, -16); hudCtx.lineTo(16, 16);
+hudCtx.moveTo(16, -16); hudCtx.lineTo(-16, 16);
+
+// After (gap-cross style)
+hudCtx.moveTo(-size, -size); hudCtx.lineTo(-gap, -gap);
+hudCtx.moveTo(gap, gap); hudCtx.lineTo(size, size);
+hudCtx.moveTo(size, -size); hudCtx.lineTo(gap, -gap);
+hudCtx.moveTo(-gap, gap); hudCtx.lineTo(-size, size);
+```
+
+### 2. Lock indicator flicker (`main.js`)
+Added rapid opacity oscillation (`globalAlpha`) that builds with lock progress for an intense strobing effect. Flicker depth reaches 55% max opacity dip on `pow(progress, 1.5)`. Stabilizes to solid on hard lock.
+
+```js
+const flickerAmt = isHard ? 0 : Math.pow(lockProgress, 1.5) * 0.55;
+const flicker = 1 - flickerAmt + flickerAmt * (0.5 + 0.5 * Math.sin(t * 50 + Math.sin(t * 17) * 8));
+hudCtx.globalAlpha = flicker;
+// ... draw brackets ...
+hudCtx.globalAlpha = 1;
+```
+
+---
+
+## **10/06/2026 — Full combat update: health, lock-on, AI, missiles, RWR, smoke, hit markers**
+
+### Overview
+Six-phase combat overhaul: health system, hit particles, lock-on mechanics, tracking missiles, enemy AI with pursuit, smoke particles, RWR warnings, hit markers, and interactive lock-on HUD.
+
+---
+
+### 1. Health system (`src/combat.js`)
+`playerHealth` (100 HP), per-enemy `hp: 100`. Bullets do 15 damage, missiles 75. On 0 HP: explosion + freeze → 3s respawn with health reset. Main.js death handler and respawn path both call `combat.resetPlayer()`.
+
+```js
+// New exports
+export function getPlayerHealth() { return playerHealth; }
+export function getMaxPlayerHealth() { return MAX_PLAYER_HEALTH; }
+export function resetPlayer() { playerHealth = MAX_PLAYER_HEALTH; }
+```
+
+### 2. Hit markers + particles (`main.js`, `src/combat.js`)
+- **Hit marker**: rotated `×` at crosshair center, 200ms fade. `_hitMarkerTimer` set to 0.2s when `combat.getHitThisFrame()` is true.
+- **Hit particles**: `spawnHitParticles(pos)` — 30-particle yellow burst (`0xffff33`) at bullet impact point, 400ms lifetime.
+
+```js
+// main.js - animate loop
+_hitMarkerTimer = combat.getHitThisFrame() ? 0.2 : Math.max(0, _hitMarkerTimer - dt);
+
+// HUD draw — rotated X
+if (_hitMarkerTimer > 0) {
+    hudCtx.strokeStyle = `rgba(255,255,255,${hmAlpha})`;
+    hudCtx.moveTo(-hmSize, -hmSize); hudCtx.lineTo(hmSize, hmSize);
+    hudCtx.moveTo(hmSize, -hmSize); hudCtx.lineTo(-hmSize, hmSize);
+}
+```
+
+### 3. Lock-on system (`src/combat.js`, `main.js`)
+**Two-stage lock** (soft → hard): 1.5s soft lock in ±30° cone (<1200m), 3s total for hard lock. Decays 2x outside cone.
+
+- **Player lock**: **L key** toggles lock mode. Each frame searches nearest enemy in ±15° cone. HUD shows `SCAN` / `LKD XX%` / `LKD HARD` in bottom-left.
+- **Visual**: green diamond corner brackets converge as progress builds (ease-in curve `pow(rawFrac, 2)`). Pulse intensity increases with progress. Shake near hard lock. On hard lock: rotation lerps smoothly (rate 6) to 45° → diamond becomes a square.
+- **Enemy lock**: ±30° cone, same timing. Used for AI decisions.
+
+```js
+// combat.js — player lock state
+let _playerLockTargetId = null;
+let _playerLockTimer = 0;
+let _playerLockState = 'none'; // 'none' | 'soft' | 'hard'
+
+export function findLockTarget(playerPos, playerQuat) { ... }
+export function setPlayerLockTarget(targetId) { ... }
+
+// main.js — L key toggle
+} else if (event.code === 'KeyL' && !event.ctrlKey && !event.metaKey && !event.repeat) {
+    _lockMode = !_lockMode;
+    if (!_lockMode) combat.setPlayerLockTarget(null);
+}
+```
+
+### 4. Tracking missiles (`src/combat.js`, `main.js`)
+Missiles accept `target` (enemy `{ enemyId }` or live `Vector3`) and `lockType`. Soft lock = 0.5 rad/s turn, hard = 1.5 rad/s. Robust cross-product axis with fallback for parallel vectors.
+
+```js
+// combat.js — tracking steering
+if (m.target && m.lockType !== 'none') {
+    if (m.target.enemyId !== undefined) {
+        const te = _enemies.find(e => e.id === m.target.enemyId);
+        if (te) _tv1.copy(te.mesh.position).sub(m.mesh.position);
+        else _tv1.copy(m.dir).multiplyScalar(1000);
+    } else {
+        _tv1.copy(m.target).sub(m.mesh.position);
+    }
+    // steer toward target at turnRate
+    ...
+}
+
+// main.js — F key lock-aware firing
+if (lockTargetId !== null && lockState !== 'none') {
+    missileTarget = { enemyId: lockTargetId };
+    missileLockType = lockState;
+}
+```
+
+### 5. Enemy AI: pursuit + missile fire (`src/combat.js`)
+- **Pursuit**: when player within ~46° of enemy nose, blends wander → pursuit (85% weight at dead center). No more sine-wave divergence when player is ahead.
+- **Missile fire**: enemy fires hard-lock missile when hard lock held, cooldown 4–7s.
+
+```js
+// Heading with pursuit blend
+let headingChange = Math.sin(time * 0.4 + e.id * 3) * 0.3;
+if (playerPos && Math.abs(relAngle) < 0.8) {
+    const focus = 1 - Math.abs(relAngle) / 0.8;
+    const pursuitTurn = -relAngle * 0.6;
+    headingChange = headingChange * (1 - focus * 0.85) + pursuitTurn * focus * 0.85;
+}
+e.heading += headingChange * dt;
+```
+
+### 6. RWR (Radar Warning Receiver) (`main.js`)
+DOM warning element (right side, matching stall-warning style). Green (`#00ff41`) for soft lock, red (`#ff3333`) for hard lock. Direction arrow + bearing. Urgency ramp over 1.2s with pulse, jitter, scale expansion, glow. Self-contained heading computation (works with HUD hidden via F7).
+
+- Soft: `RADAR LOCK` / `SOFT LOCK` + `▶ 45° RIGHT`
+- Hard: `MISSILE INBOUND` / `HARD LOCK` + `▶ 45° RIGHT · BREAK`
+
+### 7. Smoke particles (`src/combat.js`)
+`spawnExplosion()` now emits 150 gray smoke particles (1.5s lifetime, normal blending, upward drift +5 m/s, size grows 8→23 over lifetime). Fades after 60%.
+
+### 8. Enemy spawn placement (`main.js`)
+Y key: 50/50 chance ahead (flying toward you) or behind (chasing you), 400–600m range.
+
+### 9. Combat death + respawn (`main.js`)
+0 HP → freeze plane + explosion → 3s delay → `combat.resetPlayer()` + `resetAircraft()` + unfreeze.
+
+### 10. `onEnemyKill` callback (`src/combat.js`, `main.js`)
+Spawns a terrain crater at the death position.
+
+---
+
 ## **10/06/2026 — Radar fixes: HUD scope, 90° wedge offset, 180° flip, bearing ticks + tracer artifact, yellow tracers**
 
 ### 1. Radar + throttle invisible (`main.js`)
@@ -151,7 +300,7 @@ New `getProjectilePositions()` returns positions of all active missiles and bull
 
 ---
 
-## **10/06/2026 — Auto-fire, missile explosions, bullet fixes**
+## **09/06/2026 — Auto-fire, missile explosions, bullet fixes**
 
 ### 1. Auto-fire for machine gun (`main.js`, `combat.js`)
 Holding **V** now continuously fires 3-round bursts every 100ms (10 bursts/sec). Key state tracked via `setTriggerHeld(true/false)` in keydown/keyup. `updateAutoFire(dt, origin, dir)` called each frame in the animate loop — reuses persistent `_autoDir`/`_autoOrigin` vectors to avoid allocation.
@@ -167,7 +316,7 @@ Missiles on terrain impact now get the same yellow/orange additive-blended parti
 
 ---
 
-## **10/06/2026 — Machine gun, crash craters, B key removed**
+## **09/06/2026 — Machine gun, crash craters, B key removed**
 
 ### 1. Missile system (`src/combat.js`)
 Missiles are cone meshes fired from 10 units ahead of the plane. Travel at 400 m/s in the direction the plane is facing. Explode into a crater (radius 25, depth 12) on terrain impact or after 6 seconds (3s fuse + 3s flight). Managed via `combat.init(scene)` which creates a shared `THREE.Group` for all combat objects.
@@ -187,7 +336,7 @@ combat.fireMissile(origin, dir, plane.quaternion);
 
 ---
 
-## **10/06/2026 — Explosion craters + combat framework**
+## **09/06/2026 — Explosion craters + combat framework**
 
 **What changed:** Created `src/combat.js` with a crater explosion system, projectile/AI stubs, and wired terrain deformation via vertex shader. **B** key drops a test explosion.
 
@@ -223,7 +372,7 @@ float craterDeform(vec2 p) {
 
 ---
 
-## **10/06/2026 — Engine vibration**
+## **09/06/2026 — Engine vibration**
 
 **What changed:** Added tiny three-frequency sine vibration to the chase camera, scaled by throttle. Makes the plane feel alive — perfect stillness was fake.
 
@@ -242,7 +391,7 @@ camera.position.add(vib.clone().applyQuaternion(plane.quaternion));
 
 ---
 
-## **10/06/2026 — G-force body simulation**
+## **09/06/2026 — G-force body simulation**
 
 **What changed:** Camera now shifts in local space based on acceleration, simulating the pilot's body reacting to G-forces. The acceleration vector is transformed to aircraft-local space, then used to compute a camera offset, smoothed with exponential lerp at rate 12.
 
@@ -268,7 +417,7 @@ camera.position.add(gWorldOffset);
 
 ---
 
-## **10/06/2026 — Afterburner, dynamic FOV, speed pull-back**
+## **09/06/2026 — Afterburner, dynamic FOV, speed pull-back**
 
 ### 1. Afterburner thrust model (`src/physics.js`)
 
