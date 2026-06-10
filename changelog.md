@@ -7,48 +7,130 @@
 > - Bugs: problem → cause → fix. Features: show the key before/after.
 > - `---` between entries.
 
+## **10/06/2026 — Radar fixes: HUD scope, 90° wedge offset, 180° flip, bearing ticks + tracer artifact, yellow tracers**
 
-## **09/06/2026 — Fix: Stall Alignment Overpowering Gravity (Recurrence of 06/06/2026 Bug)**
-
-### 1. Velocity alignment during stall cancels gravity (`src/physics.js`)
-
-**Bug:** Nosing up at 0 throttle produced negligible vertical drop (~-1.8 m/s cap) instead of plummeting. Total force debug arrow pointed down correctly, but acceleration arrow pointed up — the plane bobbed in midair at equilibrium.
-
-**Cause:** `alignmentRate: 2.5` pulls ~4% of velocity toward the nose every frame at 60fps (line 583, `velocity.lerp(desiredVelocity, …)`). In a stall with the nose pitched up, this systematically cancels gravity's downward acceleration. Same root cause as the 06/06/2026 fix (which dropped the rate from 4.0→0.5), but alignmentRate was later raised back to 2.5 for feel, reintroducing the bug.
-
-**Fix:** The alignment rate is now scaled by a stall factor — full strength in normal flight, linearly fading to zero as AoA progresses past stallAoA through `postStallFadeAngle`. Deep stall (AoA ≥ stallAoA + postStallFadeAngle) gets zero alignment, so gravity dominates and the plane falls realistically. Non-stalled flight feel is preserved.
+### 1. Radar + throttle invisible (`main.js`)
+`updateHUD()` was called without `dt` — module-level func can't see `const dt` inside `animate()`. `radarAngle` became NaN, `hudCtx.arc()` with NaN throws, halting all drawing after the sweep wedge.
 
 ```js
-// before (physics.js:581-584)
-velocity.addScaledVector(acceleration, dt);
-const velBeforeAlign = velocity.clone();
-const postAccelerationSpeed = velocity.length();
-if (postAccelerationSpeed > 0.001) {
-    desiredVelocity.copy(forward).multiplyScalar(postAccelerationSpeed);
-    velocity.lerp(desiredVelocity, Math.min(1, dt * AERO_FEEL.alignmentRate));
-}
-
-// after — alignment fades during stall
-velocity.addScaledVector(acceleration, dt);
-const velBeforeAlign = velocity.clone();
-const postAccelerationSpeed = velocity.length();
-if (postAccelerationSpeed > 0.001) {
-    desiredVelocity.copy(forward).multiplyScalar(postAccelerationSpeed);
-    const absAoA = Math.abs(aoa);
-    const stallDepth = absAoA > AIRCRAFT.stallAoA
-        ? THREE.MathUtils.clamp((absAoA - AIRCRAFT.stallAoA) / AIRCRAFT.postStallFadeAngle, 0, 1)
-        : 0;
-    const effectiveRate = AERO_FEEL.alignmentRate * (1 - stallDepth);
-    velocity.lerp(desiredVelocity, Math.min(1, dt * effectiveRate));
-}
+// Before
+function updateHUD() { radarAngle += dt * radarSweepSpeed; ... } // dt=undefined→NaN
+// After
+function updateHUD(dt) { ... }
+updateHUD(dt);
 ```
 
-`effectiveRate` values per flight regime (F-16, stallAoA=24°, postStallFadeAngle=15°):
-| AoA | Regime | effectiveRate |
-|-----|--------|--------------|
-| ≤24° | Normal flight | 2.5 (unchanged) |
-| 30° | Stall entry | 2.5 × (1 − 0.4) = 1.5 |
-| 39°+ | Deep stall | 0 (gravity only) |
+### 2. Sweep wedge 90° off from sweep line (`main.js`)
+Canvas `arc()` uses 0 = 3 o'clock. Sweep line uses `sin`, `-cos` (0 = 12 o'clock). Wedge was perpendicular to the line.
+
+```js
+// Before
+hudCtx.arc(radarX, radarY, radarR, radarAngle - 0.08, radarAngle + 0.08);
+// After
+const swAngle = radarAngle - Math.PI / 2;
+hudCtx.arc(radarX, radarY, radarR, swAngle - 0.08, swAngle + 0.08);
+```
+
+### 3. Radar azimuth flipped 180° (`main.js`)
+`Math.atan2(dx, dz)` treats +Z as 0° bearing. World uses -Z (north) as ahead. Changed to `Math.atan2(dx, -dz)` so north = 0°.
+
+### 4. Bearing ticks + chevron heading marker (`main.js`)
+Tick marks every 45° around the outer ring. Heading marker now a chevron with heading degree label.
+
+### 5. Tracer artifact on spawn frame (`main.js`, `combat.js`)
+`setFromUnitVectors((0,0,1), direction)` produces a degenerate quaternion when direction = (0,0,-1) (antiparallel). Also `trailLen = life * speed` was 0 on spawn frame, so scale.z = 0 made it invisible that frame, then it popped in at full length next frame.
+
+**Fix:** swapped `updateAutoFire` before `combat.update(dt)` so new bullets get processed (correct quaternion + non-zero trail) within the same frame. Removed redundant quaternion set from `fireMachineGun`.
+
+```js
+// Before
+combat.update(dt);
+combat.updateAutoFire(dt, ...);
+// After
+combat.updateAutoFire(dt, ...);
+combat.update(dt);
+```
+
+### 6. Yellow tracers restored (`combat.js`)
+`0xffdd00` — bright yellow instead of off-white.
+
+---
+
+## **10/06/2026 — Smooth tracer streaks**
+
+### 1. Tracer streaks instead of moving boxes (`src/combat.js`)
+The old approach moved a fixed-length box each frame, leaving gaps between frames. New approach: each bullet stores a `tipPos` (the actual bullet tip) and renders a streak from `tip - dir * trailLen` to `tip`. Trail length grows from 0 to 35 units over the first few frames, then stays constant. This creates smooth, continuous lines in the sky — no gaps.
+
+```js
+// Old: move box, fixed geom length
+b.mesh.position.addScaledVector(b.dir, BULLET_SPEED * dt);
+
+// New: track tip, stretch mesh between tail and tip
+b.tipPos.addScaledVector(b.dir, BULLET_SPEED * dt);
+const trailLen = Math.min(STREAK_LEN, b.life * BULLET_SPEED);
+_bulletMid.copy(b.tipPos).addScaledVector(b.dir, -trailLen * 0.5);
+b.mesh.position.copy(_bulletMid);
+b.mesh.scale.z = trailLen;
+b.mesh.quaternion.setFromUnitVectors(_zAxis, b.dir);
+```
+
+Tracer geometry reduced to unit-length `BoxGeometry(0.15, 0.15, 1.0)` — actual streak length comes from Z-scaling. Additive blending, `0xffffaa` color. Bullet speed set to 1050 m/s (realistic M61 Vulcan muzzle velocity).
+
+---
+
+## **10/06/2026 — Combat overhaul: radar scan, enemy planes, tracer guns**
+
+### 1. Radar scanning system (`main.js`)
+**Bigger radar** — 100px radius (was 65px), 1200m range (was 800m).  
+**Scanning sweep** — a rotating green beam sweeps at 2 rad/s; enemies are only revealed on radar when the beam passes within 0.1 rad of their bearing. `radarContacts` Map tracks `id → lastSeenTime`; contacts fade out over 4s. Three range rings (25%, 50%, 100%). Projectiles (missiles/bullets) always visible as white dots.
+
+```js
+// New radar state
+let radarAngle = 0;
+const radarSweepSpeed = 2.0;
+const radarContactTimeout = 4;
+const radarContacts = new Map();
+
+// Sweep beam drawn each frame
+hudCtx.arc(radarX, radarY, radarR, radarAngle - 0.08, radarAngle + 0.08);
+
+// Contact tracking: sweep wedge checks bearing diff
+let diff = angle - radarAngle;
+if (Math.abs(diff) < 0.1) radarContacts.set(ep.id, performance.now());
+
+// Faded rendering
+const alpha = Math.max(0.15, 1 - age / radarContactTimeout);
+```
+
+### 2. Enemy planes as proper cuboids (`src/combat.js`)
+Enemies now use the same `BoxGeometry(4, 1, 8)` as the player (was a cone). Red color (`0xff3333`), same metalness/roughness. Full quaternion rotation with pitch/roll/yaw: sinusoidal heading drift, gentle banking, altitude oscillation ±40m.
+
+**Wind trails** — each enemy has a ring-buffered line trail (40 points, red, opacity 0.3) that traces its path.
+
+```js
+// Before: cone
+const _enemyGeom = new THREE.ConeGeometry(1.5, 5, 6);
+
+// After: cuboid with proper flight dynamics
+const _enemyGeom = new THREE.BoxGeometry(4, 1, 8);
+e.mesh.quaternion.setFromEuler(new THREE.Euler(pitch, e.heading, roll));
+```
+
+### 3. Continuous-fire tracer machine gun (`src/combat.js`)
+**Rate:** ~15 rounds/sec (0.066s interval), single-tracer per tick (was 3-round burst every 0.1s).  
+**Bullets:** elongated `BoxGeometry(0.05, 0.05, 1.0)` oriented along direction via `setFromUnitVectors` (was yellow spheres). Color `0xffdd44`, speed 1300 m/s (was 1200).  
+**Key V:** now just sets `triggerHeld = true` (was firing 5 bullets on press). Continuous stream starts from the animate loop.
+
+```js
+// Before: sphere + burst
+const _bulletGeom = new THREE.SphereGeometry(0.3, 4, 4);
+for (let i = 0; i < 3; i++) { fireMachineGun(origin, dir.clone().add(spread).normalize()); }
+
+// After: box tracer + continuous
+const _tracerGeom = new THREE.BoxGeometry(0.05, 0.05, 1.0);
+mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), direction);
+_v3.copy(dir); _v3.x += (Math.random() - 0.5) * 0.015; _v3.normalize();
+```
 
 ---
 
@@ -232,6 +314,69 @@ camera.position.addScaledVector(backDir, extraPull);
 ```
 
 ---
+
+## **09/06/2026 — Fix: Stall Alignment Overpowering Gravity (Recurrence of 06/06/2026 Bug)**
+
+### 1. Velocity alignment during stall cancels gravity (`src/physics.js`)
+
+**Bug:** Nosing up at 0 throttle produced negligible vertical drop (~-1.8 m/s cap) instead of plummeting. Total force debug arrow pointed down correctly, but acceleration arrow pointed up — the plane bobbed in midair at equilibrium.
+
+**Cause:** `alignmentRate: 2.5` pulls ~4% of velocity toward the nose every frame at 60fps (line 583, `velocity.lerp(desiredVelocity, …)`). In a stall with the nose pitched up, this systematically cancels gravity's downward acceleration. Same root cause as the 06/06/2026 fix (which dropped the rate from 4.0→0.5), but alignmentRate was later raised back to 2.5 for feel, reintroducing the bug.
+
+**Fix:** The alignment rate is now scaled by a stall factor — full strength in normal flight, linearly fading to zero as AoA progresses past stallAoA through `postStallFadeAngle`. Deep stall (AoA ≥ stallAoA + postStallFadeAngle) gets zero alignment, so gravity dominates and the plane falls realistically. Non-stalled flight feel is preserved.
+
+```js
+// before (physics.js:581-584)
+velocity.addScaledVector(acceleration, dt);
+const velBeforeAlign = velocity.clone();
+const postAccelerationSpeed = velocity.length();
+if (postAccelerationSpeed > 0.001) {
+    desiredVelocity.copy(forward).multiplyScalar(postAccelerationSpeed);
+    velocity.lerp(desiredVelocity, Math.min(1, dt * AERO_FEEL.alignmentRate));
+}
+
+// after — alignment fades during stall
+velocity.addScaledVector(acceleration, dt);
+const velBeforeAlign = velocity.clone();
+const postAccelerationSpeed = velocity.length();
+if (postAccelerationSpeed > 0.001) {
+    desiredVelocity.copy(forward).multiplyScalar(postAccelerationSpeed);
+    const absAoA = Math.abs(aoa);
+    const stallDepth = absAoA > AIRCRAFT.stallAoA
+        ? THREE.MathUtils.clamp((absAoA - AIRCRAFT.stallAoA) / AIRCRAFT.postStallFadeAngle, 0, 1)
+        : 0;
+    const effectiveRate = AERO_FEEL.alignmentRate * (1 - stallDepth);
+    velocity.lerp(desiredVelocity, Math.min(1, dt * effectiveRate));
+}
+```
+
+`effectiveRate` values per flight regime (F-16, stallAoA=24°, postStallFadeAngle=15°):
+| AoA | Regime | effectiveRate |
+|-----|--------|--------------|
+| ≤24° | Normal flight | 2.5 (unchanged) |
+| 30° | Stall entry | 2.5 × (1 − 0.4) = 1.5 |
+| 39°+ | Deep stall | 0 (gravity only) |
+
+### 2. Wind trail draws phantom line after respawn/teleport (`main.js`)
+
+**Bug:** After crashing (respawn after 3s) or swapping aircraft (P key), the wind trail drew a straight line from the old position to the new spawn — a 300m+ phantom trail across the map.
+
+**Cause:** `trailPoints[]` was never cleared on reset; the CatmullRomCurve3 interpolated through stale points from the crash/old location to the new position.
+
+**Fix:** Clear `trailPoints.length = 0` after `resetAircraft()` (respawn, line 1236) and after `setActiveAircraft()` (swap, line 362).
+
+```js
+// main.js — jet/aircraft swap (line 362)
+setActiveAircraft(next);
+trailPoints.length = 0;   // ← added
+
+// main.js — respawn after crash (line 1236)
+resetAircraft();
+trailPoints.length = 0;   // ← added
+```
+
+---
+
 
 ## **09/06/2026 — Camera slerp, throttle slider, orbit HUD reposition**
 

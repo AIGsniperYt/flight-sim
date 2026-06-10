@@ -86,6 +86,10 @@ let cameraMode = 'chase';
 let debugVisible = false;
 let debugArrowsVisible = false;
 let gForceEffectEnabled = false;
+let radarAngle = 0;
+const radarSweepSpeed = 2.0;
+const radarContactTimeout = 4;
+const radarContacts = new Map();
 
 function applyDebugArrowVisibility() {
     setDebugVectorsVisible(debugVisible && debugArrowsVisible);
@@ -360,6 +364,7 @@ document.addEventListener('keydown', (event) => {
         const idx = presets.findIndex(p => p.key === current);
         const next = presets[(idx + 1) % presets.length].key;
         setActiveAircraft(next);
+        trailPoints.length = 0;
         console.log(`Switched to: ${next}`);
     } else if (event.code === 'KeyK' && !event.ctrlKey && !event.metaKey) {
         setCollisionsEnabled(!getCollisionsEnabled());
@@ -381,18 +386,7 @@ document.addEventListener('keydown', (event) => {
     } else if (event.code === 'KeyV' && !event.ctrlKey && !event.metaKey) {
         event.preventDefault();
         combat.setTriggerHeld(true);
-        const plane = getPlane();
-        const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(plane.quaternion);
-        const origin = plane.position.clone().addScaledVector(dir, 12);
-        for (let i = 0; i < 5; i++) {
-            const spread = new THREE.Vector3(
-                (Math.random() - 0.5) * 0.02,
-                (Math.random() - 0.5) * 0.02,
-                0
-            ).applyQuaternion(plane.quaternion);
-            combat.fireMachineGun(origin, dir.clone().add(spread).normalize());
-        }
-        console.log('Bullets fired');
+        console.log('Auto-fire ON');
     } else if (event.code === 'KeyY' && !event.ctrlKey && !event.metaKey) {
         event.preventDefault();
         const p = getPlane().position;
@@ -548,7 +542,7 @@ function wrapDegrees(deg) {
     return ((deg % 360) + 360) % 360;
 }
 
-function updateHUD() {
+function updateHUD(dt) {
     if (!hudVisible) return;
 
     const W = hudCanvas.width;
@@ -732,13 +726,38 @@ function updateHUD() {
 
     hudCtx.restore();
 
-    // ---- Radar (screen coords, bottom-left) ----
-    const radarR = 65;
+    // ---- Radar (screen coords, bottom-left, scanning) ----
+    radarAngle += dt * radarSweepSpeed;
+    const radarR = 100;
     const radarX = radarR + 15;
     const radarY = H - radarR - 15;
-    const radarRange = 800;
+    const radarRange = 1200;
+    const fwdAngle = Math.atan2(hudForward.x, -hudForward.z);
+
+    // Sweep beam (faded wedge) — align arc with line convention (0 = up = -PI/2 in canvas)
+    const swAngle = radarAngle - Math.PI / 2;
+    hudCtx.save();
+    hudCtx.beginPath();
+    hudCtx.moveTo(radarX, radarY);
+    hudCtx.arc(radarX, radarY, radarR, swAngle - 0.08, swAngle + 0.08);
+    hudCtx.closePath();
+    hudCtx.fillStyle = 'rgba(0,255,0,0.06)';
+    hudCtx.fill();
+    hudCtx.restore();
+
+    // Sweep line
+    hudCtx.strokeStyle = 'rgba(0,255,0,0.3)';
+    hudCtx.lineWidth = 1;
+    hudCtx.beginPath();
+    hudCtx.moveTo(radarX, radarY);
+    hudCtx.lineTo(
+        radarX + Math.sin(radarAngle) * radarR,
+        radarY - Math.cos(radarAngle) * radarR
+    );
+    hudCtx.stroke();
+
+    // Range rings
     hudCtx.strokeStyle = '#0f0';
-    hudCtx.fillStyle = '#0f0';
     hudCtx.lineWidth = 0.5;
     hudCtx.beginPath();
     hudCtx.arc(radarX, radarY, radarR, 0, Math.PI * 2);
@@ -746,42 +765,94 @@ function updateHUD() {
     hudCtx.beginPath();
     hudCtx.arc(radarX, radarY, radarR * 0.5, 0, Math.PI * 2);
     hudCtx.stroke();
-    const fwdAngle = Math.atan2(hudForward.x, -hudForward.z);
-    hudCtx.lineWidth = 1.5;
     hudCtx.beginPath();
-    hudCtx.moveTo(radarX, radarY - radarR);
-    hudCtx.lineTo(radarX, radarY - radarR - 8);
+    hudCtx.arc(radarX, radarY, radarR * 0.25, 0, Math.PI * 2);
     hudCtx.stroke();
-    const enemies = combat.getEnemyPositions();
-    const projs = combat.getProjectilePositions();
+
+    // Bearing tick marks every 45°
+    hudCtx.strokeStyle = '#0f0';
+    hudCtx.lineWidth = 0.5;
+    for (let a = 0; a < Math.PI * 2; a += Math.PI / 4) {
+        const inner = a === 0 ? radarR - 10 : radarR - 5;
+        hudCtx.beginPath();
+        hudCtx.moveTo(radarX + Math.sin(a) * inner, radarY - Math.cos(a) * inner);
+        hudCtx.lineTo(radarX + Math.sin(a) * radarR, radarY - Math.cos(a) * radarR);
+        hudCtx.stroke();
+    }
+
+    // Heading marker (top = heading direction)
+    hudCtx.strokeStyle = '#0f0';
+    hudCtx.lineWidth = 2;
+    hudCtx.beginPath();
+    hudCtx.moveTo(radarX, radarY - radarR + 12);
+    hudCtx.lineTo(radarX, radarY - radarR - 14);
+    hudCtx.stroke();
+    hudCtx.beginPath();
+    hudCtx.moveTo(radarX - 5, radarY - radarR + 6);
+    hudCtx.lineTo(radarX, radarY - radarR);
+    hudCtx.lineTo(radarX + 5, radarY - radarR + 6);
+    hudCtx.stroke();
+    hudCtx.font = 'bold 9px monospace';
+    hudCtx.textAlign = 'center';
+    hudCtx.textBaseline = 'bottom';
+    hudCtx.fillStyle = '#0f0';
+    hudCtx.fillText(`${Math.round(headingDeg)}°`, radarX, radarY - radarR - 16);
+
+    // Update radar contacts from sweep
+    const enemies = combat.getEnemyData();
     for (const ep of enemies) {
         const dx = ep.x - plane.position.x;
         const dz = ep.z - plane.position.z;
         const dist = Math.sqrt(dx * dx + dz * dz);
         if (dist > radarRange) continue;
-        const angle = Math.atan2(dx, dz) - fwdAngle;
+        const relAngle = Math.atan2(dx, -dz) - fwdAngle;
+        let diff = relAngle - radarAngle;
+        while (diff > Math.PI) diff -= Math.PI * 2;
+        while (diff < -Math.PI) diff += Math.PI * 2;
+        if (Math.abs(diff) < 0.1) {
+            radarContacts.set(ep.id, performance.now());
+        }
+    }
+
+    // Draw contacts with fade based on last seen time
+    const nowRadar = performance.now();
+    for (const ep of enemies) {
+        const dx = ep.x - plane.position.x;
+        const dz = ep.z - plane.position.z;
+        const dist = Math.sqrt(dx * dx + dz * dz);
+        if (dist > radarRange) continue;
+        const lastSeen = radarContacts.get(ep.id) || 0;
+        const age = (nowRadar - lastSeen) / 1000;
+        if (age > radarContactTimeout) continue;
+        const alpha = Math.max(0.15, 1 - age / radarContactTimeout);
+        const angle = Math.atan2(dx, -dz) - fwdAngle;
         const r = (dist / radarRange) * radarR;
         const px = radarX + Math.sin(angle) * r;
         const py = radarY - Math.cos(angle) * r;
-        hudCtx.fillStyle = '#f00';
+        hudCtx.fillStyle = `rgba(255,${Math.round(80 * alpha)},${Math.round(80 * alpha)},${alpha})`;
         hudCtx.beginPath();
         hudCtx.arc(px, py, 3, 0, Math.PI * 2);
         hudCtx.fill();
     }
+
+    // Projectiles always visible on radar
+    const projs = combat.getProjectilePositions();
     for (const pp of projs) {
         const dx = pp.x - plane.position.x;
         const dz = pp.z - plane.position.z;
         const dist = Math.sqrt(dx * dx + dz * dz);
         if (dist > radarRange) continue;
-        const angle = Math.atan2(dx, dz) - fwdAngle;
+        const angle = Math.atan2(dx, -dz) - fwdAngle;
         const r = (dist / radarRange) * radarR;
         const px = radarX + Math.sin(angle) * r;
         const py = radarY - Math.cos(angle) * r;
-        hudCtx.fillStyle = '#fff';
+        hudCtx.fillStyle = 'rgba(255,255,255,0.6)';
         hudCtx.beginPath();
         hudCtx.arc(px, py, 1.5, 0, Math.PI * 2);
         hudCtx.fill();
     }
+
+    // Radar label
     hudCtx.fillStyle = '#0f0';
     hudCtx.font = '8px monospace';
     hudCtx.textAlign = 'center';
@@ -1221,8 +1292,8 @@ function animate() {
 
     // 3. World Streamers
     updateChunks(scene, camera, frustum, cameraVelocity.x, cameraVelocity.z);
-    combat.update(dt);
     { const _p = getPlane(); _autoDir.set(0, 0, -1).applyQuaternion(_p.quaternion); _autoOrigin.copy(_p.position).addScaledVector(_autoDir, 12); combat.updateAutoFire(dt, _autoOrigin, _autoDir); }
+    combat.update(dt);
     const craterData = combat.getCraterArray();
     setCraterData(craterData);
     updateExplosion();
@@ -1234,6 +1305,7 @@ function animate() {
         if (explosionStart > 0 && elapsed > 3000 && !_respawning) {
             _respawning = true;
             resetAircraft();
+            trailPoints.length = 0;
             console.log('Respawned');
         } else if (!_respawning) {
             _respawning = false;
@@ -1281,7 +1353,7 @@ function animate() {
 
     // 7. Post-Render UI Updates
     updateDebug(dt * 1000);
-    updateHUD();
+    updateHUD(dt);
     updateStallWarning();
     updateGForceEffect();
 }

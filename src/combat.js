@@ -6,14 +6,20 @@ const craters = [];
 const _craterVec4 = [];
 const MISSILE_SPEED = 400;
 const MISSILE_LIFETIME = 8;
-const BULLET_SPEED = 1200;
+const BULLET_SPEED = 1050;
 const BULLET_LIFETIME = 2.5;
-const AUTO_FIRE_INTERVAL = 0.1;
+const CONTINUOUS_FIRE_INTERVAL = 0.066;
 const EXPLOSION_PARTICLES = 250;
 const EXPLOSION_DURATION = 800;
+const _v3 = new THREE.Vector3();
+const _up = new THREE.Vector3(0, 1, 0);
+const _forward = new THREE.Vector3(0, 0, -1);
+const _enemyDir = new THREE.Vector3();
+const _bulletMid = new THREE.Vector3();
+const _zAxis = new THREE.Vector3(0, 0, 1);
+let _nextEnemyId = 0;
 
 export function getMaxCraters() { return MAX_CRATERS; }
-export let triggerHeld = false;
 
 export function explode(pos, radius, depth) {
     const terrainY = getHeightScaled(pos.x, pos.z, 1.0);
@@ -99,9 +105,16 @@ export function fireMissile(origin, direction, quaternion) {
     _missiles.push({ mesh, dir: direction.clone().normalize(), life: 0 });
 }
 
-// ---- Bullets ----
-const _bulletGeom = new THREE.SphereGeometry(0.3, 4, 4);
-const _bulletMat = new THREE.MeshBasicMaterial({ color: 0xffff00 });
+// ---- Bullets (tracer streaks) ----
+const _tracerGeom = new THREE.BoxGeometry(0.15, 0.15, 1.0);
+const _tracerMat = new THREE.MeshBasicMaterial({
+    color: 0xffdd00,
+    transparent: true,
+    opacity: 1,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false
+});
+const STREAK_LEN = 35;
 let _bullets = [];
 let _vHeld = false;
 let _vFireTimer = 0;
@@ -109,29 +122,84 @@ let _vFireTimer = 0;
 export function setTriggerHeld(held) { _vHeld = held; }
 
 export function fireMachineGun(origin, direction) {
-    const mesh = new THREE.Mesh(_bulletGeom, _bulletMat);
+    const mesh = new THREE.Mesh(_tracerGeom, _tracerMat);
     mesh.position.copy(origin);
     _group.add(mesh);
-    _bullets.push({ mesh, dir: direction.clone().normalize(), life: 0 });
+    _bullets.push({
+        mesh,
+        dir: direction.clone().normalize(),
+        life: 0,
+        tipPos: origin.clone()
+    });
 }
 
+// ---- Enemy planes ----
+const _enemyGeom = new THREE.BoxGeometry(4, 1, 8);
+const _enemyMat = new THREE.MeshStandardMaterial({ color: 0xff3333, metalness: 0.2, roughness: 0.6 });
+const _enemyTrailLen = 40;
+let _enemies = [];
+
 export function updateAutoFire(dt, origin, dir) {
-    if (!_vHeld) { _vFireTimer = 0; return; }
+    if (!_vHeld) { _vFireTimer = CONTINUOUS_FIRE_INTERVAL; return; }
     _vFireTimer -= dt;
     if (_vFireTimer <= 0) {
-        _vFireTimer = AUTO_FIRE_INTERVAL;
-        for (let i = 0; i < 3; i++) {
-            const spread = new THREE.Vector3(
-                (Math.random() - 0.5) * 0.02,
-                (Math.random() - 0.5) * 0.02,
-                0
-            );
-            fireMachineGun(origin, dir.clone().add(spread).normalize());
-        }
+        _vFireTimer = CONTINUOUS_FIRE_INTERVAL;
+        _v3.copy(dir);
+        _v3.x += (Math.random() - 0.5) * 0.015;
+        _v3.y += (Math.random() - 0.5) * 0.015;
+        _v3.z += (Math.random() - 0.5) * 0.005;
+        _v3.normalize();
+        fireMachineGun(origin, _v3);
     }
 }
 
+export function spawnEnemy(position, heading) {
+    const mesh = new THREE.Mesh(_enemyGeom, _enemyMat);
+    mesh.position.copy(position);
+    mesh.rotation.y = heading;
+    _group.add(mesh);
+
+    const trailPos = new Float32Array(_enemyTrailLen * 3);
+    const trailGeom = new THREE.BufferGeometry();
+    trailGeom.setAttribute('position', new THREE.BufferAttribute(trailPos, 3));
+    trailGeom.setDrawRange(0, 0);
+    const trailMat = new THREE.LineBasicMaterial({
+        color: 0xff6666, transparent: true, opacity: 0.3
+    });
+    const trailLine = new THREE.Line(trailGeom, trailMat);
+    trailLine.frustumCulled = false;
+    _group.add(trailLine);
+
+    _enemies.push({
+        mesh, trail: { line: trailLine, pos: trailPos, count: 0, head: 0 },
+        heading, speed: 150 + Math.random() * 80, id: _nextEnemyId++
+    });
+}
+
+export function getEnemyData() {
+    return _enemies.map(e => ({
+        id: e.id,
+        x: e.mesh.position.x,
+        y: e.mesh.position.y,
+        z: e.mesh.position.z
+    }));
+}
+
+export function getProjectilePositions() {
+    const out = [];
+    for (const m of _missiles) out.push(m.mesh.position.clone());
+    for (const b of _bullets) out.push(b.tipPos.clone());
+    return out;
+}
+
+export function getMissileCount() { return _missiles.length; }
+export function getBulletCount() { return _bullets.length; }
+export function getEnemyCount() { return _enemies.length; }
+
+// ---- Update ----
 export function update(dt) {
+    const now = performance.now();
+
     // Missiles
     for (let i = _missiles.length - 1; i >= 0; i--) {
         const m = _missiles[i];
@@ -148,32 +216,72 @@ export function update(dt) {
         }
     }
 
-    // Bullets
+    // Bullets (tracer streaks)
     for (let i = _bullets.length - 1; i >= 0; i--) {
         const b = _bullets[i];
         b.life += dt;
-        b.mesh.position.addScaledVector(b.dir, BULLET_SPEED * dt);
-        const terrainY = getHeightScaled(b.mesh.position.x, b.mesh.position.z, 1.0);
-        if (b.mesh.position.y < terrainY || b.life > BULLET_LIFETIME) {
+        b.tipPos.addScaledVector(b.dir, BULLET_SPEED * dt);
+
+        const trailLen = Math.min(STREAK_LEN, b.life * BULLET_SPEED);
+        _bulletMid.copy(b.tipPos).addScaledVector(b.dir, -trailLen * 0.5);
+        b.mesh.position.copy(_bulletMid);
+        b.mesh.scale.z = trailLen;
+        b.mesh.quaternion.setFromUnitVectors(_zAxis, b.dir);
+
+        const terrainY = getHeightScaled(b.tipPos.x, b.tipPos.z, 1.0);
+        if (b.tipPos.y < terrainY || b.life > BULLET_LIFETIME) {
             _group.remove(b.mesh);
             _bullets.splice(i, 1);
         }
     }
 
-    // Enemies
+    // Enemies + their trails
     for (const e of _enemies) {
-        const dir = new THREE.Vector3(0, 0, -1).applyAxisAngle(new THREE.Vector3(0, 1, 0), e.heading);
-        e.mesh.position.addScaledVector(dir, e.speed * dt);
+        const time = now * 0.001;
+        _enemyDir.set(0, 0, -1).applyAxisAngle(_up, e.heading);
+
         const terrainY = getHeightScaled(e.mesh.position.x, e.mesh.position.z, 1.0);
-        e.mesh.position.y = terrainY + 200 + Math.sin(performance.now() * 0.001 + e.mesh.id) * 30;
-        e.heading += Math.sin(performance.now() * 0.0005 + e.mesh.id * 3) * 0.2 * dt;
-        e.mesh.rotation.y = e.heading;
+        const targetAlt = terrainY + 200 + Math.sin(time * 0.7 + e.id * 3) * 40;
+        const altDiff = targetAlt - e.mesh.position.y;
+        e.mesh.position.y += altDiff * dt * 2;
+
+        e.mesh.position.addScaledVector(_enemyDir, e.speed * dt);
+
+        e.heading += Math.sin(time * 0.4 + e.id * 3) * 0.3 * dt;
+        const pitch = Math.sin(time * 0.5 + e.id * 2) * 0.12;
+        const roll = Math.sin(time * 0.6 + e.id * 4) * 0.08;
+        e.mesh.quaternion.setFromEuler(new THREE.Euler(pitch, e.heading, roll));
+
+        // Update trail (ring buffer)
+        const tr = e.trail;
+        tr.head = (tr.head + 1) % _enemyTrailLen;
+        const i3 = tr.head * 3;
+        tr.pos[i3] = e.mesh.position.x;
+        tr.pos[i3 + 1] = e.mesh.position.y;
+        tr.pos[i3 + 2] = e.mesh.position.z;
+        if (tr.count < _enemyTrailLen) tr.count++;
+        tr.line.geometry.attributes.position.needsUpdate = true;
+
+        // Copy ring buffer to draw order
+        const arr = tr.pos;
+        const count = tr.count;
+        if (count >= 2) {
+            const drawArr = tr.line.geometry.attributes.position.array;
+            for (let j = 0; j < count; j++) {
+                const srcIdx = ((tr.head - j) % _enemyTrailLen + _enemyTrailLen) % _enemyTrailLen;
+                drawArr[j * 3] = arr[srcIdx * 3];
+                drawArr[j * 3 + 1] = arr[srcIdx * 3 + 1];
+                drawArr[j * 3 + 2] = arr[srcIdx * 3 + 2];
+            }
+            tr.line.geometry.setDrawRange(0, count);
+            tr.line.geometry.attributes.position.needsUpdate = true;
+        }
     }
 
     // Explosion particles
     for (let i = _explosions.length - 1; i >= 0; i--) {
         const e = _explosions[i];
-        const elapsed = performance.now() - e.userData.start;
+        const elapsed = now - e.userData.start;
         if (elapsed > EXPLOSION_DURATION) {
             _group.remove(e);
             e.geometry.dispose();
@@ -194,31 +302,3 @@ export function update(dt) {
         e.material.opacity = 1 - progress;
     }
 }
-
-// ---- Enemy planes ----
-const _enemyGeom = new THREE.ConeGeometry(1.5, 5, 6);
-const _enemyMat = new THREE.MeshBasicMaterial({ color: 0xff3333 });
-let _enemies = [];
-
-export function spawnEnemy(position, heading) {
-    const mesh = new THREE.Mesh(_enemyGeom, _enemyMat);
-    mesh.position.copy(position);
-    mesh.rotation.y = heading;
-    _group.add(mesh);
-    _enemies.push({ mesh, heading, speed: 150 + Math.random() * 80 });
-}
-
-export function getEnemyPositions() {
-    return _enemies.map(e => e.mesh.position.clone());
-}
-
-export function getProjectilePositions() {
-    const out = [];
-    for (const m of _missiles) out.push(m.mesh.position.clone());
-    for (const b of _bullets) out.push(b.mesh.position.clone());
-    return out;
-}
-
-export function getMissileCount() { return _missiles.length; }
-export function getBulletCount() { return _bullets.length; }
-export function getEnemyCount() { return _enemies.length; }
