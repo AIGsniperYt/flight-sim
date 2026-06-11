@@ -29,8 +29,8 @@ import {
 } from './src/physics.js';
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x2a1815);
-scene.fog = new THREE.FogExp2(0x2a1815, 0.0003);
+scene.background = new THREE.Color(0x2a1a0a);
+scene.fog = new THREE.FogExp2(0x2a1a0a, 0.0003);
 
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 100000);
 camera.position.y = 10;
@@ -38,7 +38,7 @@ camera.position.y = 10;
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
 document.body.appendChild(renderer.domElement);
-renderer.setClearColor(0x2a1815);
+renderer.setClearColor(0x2a1a0a);
 renderer.outputEncoding = THREE.sRGBEncoding;
 renderer.domElement.addEventListener('contextmenu', (event) => event.preventDefault());
 
@@ -50,10 +50,10 @@ const CinematicShader = {
         tDiffuse: { value: null },
         vignetteIntensity: { value: 0.6 },
         vignetteFeather: { value: 0.35 },
-        saturation: { value: 0.7 },
+        saturation: { value: 0.85 },
         contrast: { value: 1.3 },
-        shadowsColor: { value: new THREE.Color(0.0, 0.03, 0.10) },
-        highlightsColor: { value: new THREE.Color(0.12, 0.06, 0.0) },
+        shadowsColor: { value: new THREE.Color(0.06, 0.03, 0.0) },
+        highlightsColor: { value: new THREE.Color(0.12, 0.06, -0.02) },
         colorGradeBlend: { value: 0.85 },
         exposure: { value: 0.7 }
     },
