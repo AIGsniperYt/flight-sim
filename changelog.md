@@ -21,16 +21,21 @@ targetFov = 60 + min(speed/250,1)*30 + thr*20 + clamp(localAccel.z*2,-10,0) + (a
 targetFov = 60 + min(speed/200,1)*35 + thr*6 + clamp(localAccel.z*2,-10,0) + (airbrakes?-15:0)
 ```
 
-**Also added:** chase camera position now lerps toward target at rate 15 instead of snapping frame-to-frame. All movement (turns, climbs, airbrake push, G-body, vibration) feels smooth and springy.
+**Reverted position lerp:** `camera.position.lerp(_camTarget, rate 15)` created a permanent chase error — camera always behind, always catching up, never settling. Caused jittery "boing" sensation. Switched back to direct assignment. Component-level smoothing (`_smoothPull` rate 20, `_gBodyOffset` rate 12) already handles smoothness without the catch-up lag.
 
 ```js
-_camTarget
+// Before (jittery)
+_camTarget.copy(plane.position).add(worldOffset).addScaledVector(_camBackDir, _smoothPull).add(gWorldOffset);
+_camTarget.add(vib.clone().applyQuaternion(plane.quaternion));
+camera.position.lerp(_camTarget, 1 - Math.exp(-15 * dt));
+
+// After (direct assignment, no chase error)
+camera.position
     .copy(plane.position)
     .add(worldOffset)
     .addScaledVector(_camBackDir, _smoothPull)
-    .add(gWorldOffset);
-_camTarget.add(vib.clone().applyQuaternion(plane.quaternion));
-camera.position.lerp(_camTarget, 1 - Math.exp(-15 * dt));
+    .add(gWorldOffset)
+    .add(vib.clone().applyQuaternion(plane.quaternion));
 ```
 
 ---

@@ -1350,13 +1350,12 @@ function updateOrbitCamera(dt) {
             Math.sin(_vibTime * 67 + 2.7) * vibAmp * 0.5
         );
 
-        _camTarget
+        camera.position
             .copy(plane.position)
             .add(worldOffset)
             .addScaledVector(_camBackDir, _smoothPull)
-            .add(gWorldOffset);
-        _camTarget.add(vib.clone().applyQuaternion(plane.quaternion));
-        camera.position.lerp(_camTarget, 1 - Math.exp(-15 * dt));
+            .add(gWorldOffset)
+            .add(vib.clone().applyQuaternion(plane.quaternion));
 
         cameraQuat.slerp(plane.quaternion, 1 - Math.exp(-CAM_SLERP_RATE * dt));
         camera.quaternion.copy(cameraQuat);
