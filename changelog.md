@@ -7,7 +7,39 @@
 > - Bugs: problem → cause → fix. Features: show the key before/after.
 > - `---` between entries.
 
-## **10/06/2026 — Lead indicator + hitmarker refinements + lock flicker**
+## **11/06/2026 — Camera immersiveness: deceleration + airbrake feedback + position lerp**
+
+### Dynamic FOV (`main.js`)
+FOV now responds to deceleration and airbrakes, not just speed and throttle:
+- Deceleration (negative local `accel.z`) widens FOV up to 15° — lurch-forward feeling when braking
+- Airbrakes instantly add 15° FOV — strong visual cue that brakes are out
+- Speed contribution reduced from 30°→25°, throttle from 20°→15° to make room
+
+```js
+targetFov = 60
+    + min(speed / 250, 1) * 30          // speed tunnel vision
+    + thr * 20                           // power zoom
+    + clamp(localAccel.z * 2, -10, 0)    // deceleration narrow (thrown forward)
+    + (airbrakes ? -15 : 0);             // airbrake tunnel
+```
+
+### Camera position lerp + smoothed pull (`main.js`)
+Chase camera no longer snaps to the computed position each frame. Instead, `_camTarget` is computed and `camera.position.lerp()` applies at rate 15, making all movement — turns, climbs, airbrake push, G-body, vibration — feel smooth and springy rather than rigidly attached.
+Camera pull-back now accounts for deceleration and airbrakes, with smooth transitions:
+- Hard deceleration pushes camera forward up to 2 units (nose-over feeling)
+- Airbrakes push camera forward 3 units
+- Net target pull = `speedPull - decelPush - brakePush` (clamped to ≥ 0)
+- `_smoothPull` lerps toward target at same rate as FOV (`exp(-8*dt)`), preventing snap when airbrakes toggle or deceleration spikes end
+
+```js
+const targetPull = max(0, min(speed / 300, 1) * 6 - clamp(-localAccel.z * 0.3, 0, 2) - (airbrakes ? 3 : 0));
+_smoothPull += (targetPull - _smoothPull) * (1 - Math.exp(-8 * dt));
+camera.position.addScaledVector(backDir, _smoothPull);
+```
+
+---
+
+## **11/06/2026 — Lead indicator + hitmarker refinements + lock flicker**
 
 HOLY MOLY bullets were impossible to hit, I only landed 1 shot after like 20 minutes of trying to shoot literal continous infinite bullets, flipping hell - so I needed to make it easier or atleast show me if I'm even on the right track for my own sanity - I missed even when aiming ahead, once again to reiterate: I only landed **one** bullet.
 

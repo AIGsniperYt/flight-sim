@@ -1305,23 +1305,34 @@ function updateRWR() {
 }
 
 let _currentFov = 75;
+let _smoothPull = 6;
+const _camTarget = new THREE.Vector3();
+const _camBackDir = new THREE.Vector3();
 function updateOrbitCamera(dt) {
     const plane = getPlane();
-    const speed = getFlightState().speed;
-    const thr = getFlightState().throttle;
-    const targetFov = 60 + Math.min(speed / 250, 1) * 30 + thr * 20;
-    _currentFov += (targetFov - _currentFov) * (1 - Math.exp(-8 * dt));
+    const st = getFlightState();
+    const speed = st.speed;
+    const thr = st.throttle;
+    const airbrakes = st.airbrakes;
+    const accel = st.acceleration;
+    const localAccel = new THREE.Vector3(accel.x, accel.y, accel.z).applyQuaternion(plane.quaternion.clone().invert());
+
+    // Dynamic FOV — speed widens, deceleration/airbrakes narrow (thrown forward = tunnel focus)
+    let targetFov = 60;
+    targetFov += Math.min(speed / 250, 1) * 30;
+    targetFov += thr * 20;
+    targetFov += THREE.MathUtils.clamp(localAccel.z * 2, -10, 0);
+    if (airbrakes) targetFov -= 15;
+    _currentFov += (targetFov - _currentFov) * (1 - Math.exp(-20 * dt));
     camera.fov = _currentFov;
     camera.updateProjectionMatrix();
 
     if (cameraMode === 'chase') {
         const worldOffset = defaultCameraOffset.clone().applyQuaternion(plane.quaternion);
-        camera.position.copy(plane.position).add(worldOffset);
-        const extraPull = Math.min(speed / 300, 1) * 6;
-        const backDir = new THREE.Vector3(0, 0, 1).applyQuaternion(plane.quaternion);
-        camera.position.addScaledVector(backDir, extraPull);
-        const accel = getFlightState().acceleration;
-        const localAccel = new THREE.Vector3(accel.x, accel.y, accel.z).applyQuaternion(plane.quaternion.clone().invert());
+        const targetPull = Math.max(0, Math.min(speed / 200, 1) * 8 - THREE.MathUtils.clamp(-localAccel.z * 0.5, 0, 3) - (airbrakes ? 4 : 0));
+        _smoothPull += (targetPull - _smoothPull) * (1 - Math.exp(-20 * dt));
+        _camBackDir.set(0, 0, 1).applyQuaternion(plane.quaternion);
+
         const gScale = 0.04;
         _gBodyTarget.set(
             THREE.MathUtils.clamp(-localAccel.x * gScale, -0.6, 0.6),
@@ -1330,7 +1341,7 @@ function updateOrbitCamera(dt) {
         );
         _gBodyOffset.lerp(_gBodyTarget, 1 - Math.exp(-12 * dt));
         const gWorldOffset = _gBodyOffset.clone().applyQuaternion(plane.quaternion);
-        camera.position.add(gWorldOffset);
+
         _vibTime += dt;
         const vibAmp = 0.012 * thr;
         const vib = new THREE.Vector3(
@@ -1338,7 +1349,15 @@ function updateOrbitCamera(dt) {
             Math.sin(_vibTime * 80) * vibAmp,
             Math.sin(_vibTime * 67 + 2.7) * vibAmp * 0.5
         );
-        camera.position.add(vib.clone().applyQuaternion(plane.quaternion));
+
+        _camTarget
+            .copy(plane.position)
+            .add(worldOffset)
+            .addScaledVector(_camBackDir, _smoothPull)
+            .add(gWorldOffset);
+        _camTarget.add(vib.clone().applyQuaternion(plane.quaternion));
+        camera.position.lerp(_camTarget, 1 - Math.exp(-15 * dt));
+
         cameraQuat.slerp(plane.quaternion, 1 - Math.exp(-CAM_SLERP_RATE * dt));
         camera.quaternion.copy(cameraQuat);
         cameraControls.target.copy(plane.position);
