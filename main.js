@@ -29,8 +29,8 @@ import {
 } from './src/physics.js';
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x2a1a0a);
-scene.fog = new THREE.FogExp2(0x2a1a0a, 0.0003);
+scene.background = new THREE.Color(0xcc7733);
+scene.fog = new THREE.FogExp2(0xcc7733, 0.0003);
 
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 100000);
 camera.position.y = 10;
@@ -38,7 +38,7 @@ camera.position.y = 10;
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
 document.body.appendChild(renderer.domElement);
-renderer.setClearColor(0x2a1a0a);
+renderer.setClearColor(0xcc7733);
 renderer.outputEncoding = THREE.sRGBEncoding;
 renderer.domElement.addEventListener('contextmenu', (event) => event.preventDefault());
 
@@ -48,8 +48,8 @@ composer.addPass(new RenderPass(scene, camera));
 const CinematicShader = {
     uniforms: {
         tDiffuse: { value: null },
-        vignetteIntensity: { value: 0.6 },
-        vignetteFeather: { value: 0.35 },
+        vignetteIntensity: { value: 0.15 },
+        vignetteFeather: { value: 0.25 },
         saturation: { value: 0.85 },
         contrast: { value: 1.3 },
         shadowsColor: { value: new THREE.Color(0.06, 0.03, 0.0) },
