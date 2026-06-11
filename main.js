@@ -1442,6 +1442,8 @@ function updateRWR() {
 
 let _currentFov = 75;
 let _smoothPull = 6;
+let _fovSpeed = 200;
+let _prevThrottle = -1;
 const _camTarget = new THREE.Vector3();
 const _camBackDir = new THREE.Vector3();
 function updateOrbitCamera(dt) {
@@ -1453,20 +1455,32 @@ function updateOrbitCamera(dt) {
     const accel = st.acceleration;
     const localAccel = new THREE.Vector3(accel.x, accel.y, accel.z).applyQuaternion(plane.quaternion.clone().invert());
 
-    // Dynamic FOV — speed widens, deceleration/airbrakes narrow (thrown forward = tunnel focus)
+    // Smoothed speed — turns briefly drop speed but FOV shouldn't snap narrow then pop back
+    _fovSpeed += (speed - _fovSpeed) * Math.min(1, dt * 1.5);
+
+    // Throttle delta — intentional acceleration only, not turn forces
+    if (_prevThrottle < 0) _prevThrottle = thr;
+    const thrDelta = (thr - _prevThrottle) / Math.max(dt, 0.001);
+    _prevThrottle = thr;
+
+    // Dynamic FOV with asymmetric response:
+    //   widening (accel/lurch forward) = fast rate 20
+    //   narrowing (decel/pushed back)  = slow rate 3
     let targetFov = 60;
-    targetFov += Math.min(speed / 200, 1) * 35;
+    targetFov += Math.min(_fovSpeed / 200, 1) * 35;
     targetFov += thr * 6;
-    targetFov += THREE.MathUtils.clamp(localAccel.z * 2, -10, 0);
+    targetFov += THREE.MathUtils.clamp(thrDelta * 2, -5, 10);
     if (airbrakes) targetFov -= 15;
-    _currentFov += (targetFov - _currentFov) * (1 - Math.exp(-20 * dt));
+    const fovDiff = targetFov - _currentFov;
+    _currentFov += fovDiff * (1 - Math.exp(-(fovDiff > 0 ? 20 : 3) * dt));
     camera.fov = _currentFov;
     camera.updateProjectionMatrix();
 
     if (cameraMode === 'chase') {
         const worldOffset = defaultCameraOffset.clone().applyQuaternion(plane.quaternion);
-        const targetPull = Math.max(0, Math.min(speed / 200, 1) * 8 - THREE.MathUtils.clamp(-localAccel.z * 0.5, 0, 3) - (airbrakes ? 4 : 0));
-        _smoothPull += (targetPull - _smoothPull) * (1 - Math.exp(-20 * dt));
+        const targetPull = Math.max(0, Math.min(_fovSpeed / 200, 1) * 8 - THREE.MathUtils.clamp(-thrDelta * 0.3, 0, 2) - (airbrakes ? 4 : 0));
+        const pullDiff = targetPull - _smoothPull;
+        _smoothPull += pullDiff * (1 - Math.exp(-(pullDiff > 0 ? 20 : 3) * dt));
         _camBackDir.set(0, 0, 1).applyQuaternion(plane.quaternion);
 
         const gScale = 0.04;

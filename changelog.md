@@ -7,6 +7,70 @@
 > - Bugs: problem → cause → fix. Features: show the key before/after.
 > - `---` between entries.
 
+## **11/06/2026 — Final camera tuning: asymmetric FOV rates + throttle delta**
+
+**What changed:** Complete rewrite of dynamic FOV and camera pull to fix turn-induced FOV lurches and airbrake snappiness. Three core changes:
+
+### 1. Acceleration term replaced with throttle delta (`main.js`)
+
+**Problem:** `clamp(localAccel.z * 2, -10, 0)` in the FOV formula picked up turn-induced deceleration. When a turn ended and acceleration normalized, FOV lurched suddenly — even though throttle and speed were steady. The acceleration term couldn't distinguish "I hit the brakes" from "I'm turning."
+
+**Fix:** FOV and camera pull now respond to throttle derivative (`thrDelta`) instead of raw acceleration. Only intentional throttle changes affect the camera — turn forces are completely ignored.
+
+```js
+// Before: localAccel.z picks up turn forces
+targetFov += clamp(localAccel.z * 2, -10, 0);
+const targetPull = ... - clamp(-localAccel.z * 0.5, 0, 3);
+
+// After: throttle delta — intentional only
+if (_prevThrottle < 0) _prevThrottle = thr;
+const thrDelta = (thr - _prevThrottle) / max(dt, 0.001);
+targetFov += clamp(thrDelta * 2, -5, 10);
+const targetPull = ... - clamp(-thrDelta * 0.3, 0, 2);
+```
+
+Results: full throttle punch = fast FOV widen (lurch forward). Chop throttle = slight FOV narrow (pushed back). Turn = no FOV change. Clean and physically intuitive.
+
+### 2. Asymmetric lerp rates (`main.js`)
+
+**Problem:** A single exponential rate for both direction meant braking/airbrake felt as snappy as accelerating. The smoothing approach (separate `_smoothBrakeFov`, `_smoothBrakePull`, `_smoothAccelFov` variables) worked but added complexity.
+
+**Fix:** Both FOV and pull now use direction-dependent rates — fast when widening (rate 20, ~150ms), slow when narrowing (rate 3, ~1s). Eliminates all intermediate smoothing variables. Airbrake gets its gradual feel for free (negative diff = slow).
+
+```js
+// Before: one rate for everything + 3 smoothing variables
+_smoothBrakeFov += ...; _smoothBrakePull += ...; _smoothAccelFov += ...;
+_currentFov += diff * (1 - exp(-20 * dt));
+_smoothPull  += diff * (1 - exp(-20 * dt));
+
+// After: asymmetric, zero extra variables
+const fovDiff = targetFov - _currentFov;
+_currentFov += fovDiff * (1 - exp(-(fovDiff > 0 ? 20 : 3) * dt));
+const pullDiff = targetPull - _smoothPull;
+_smoothPull += pullDiff * (1 - exp(-(pullDiff > 0 ? 20 : 3) * dt));
+```
+
+### 3. Smoothed speed for FOV base (`main.js`)
+
+Speed still controls the base FOV (`min(speed/200,1)*35`), but brief speed dips during turns are smoothed out via `_fovSpeed` at rate 1.5. Prevents the FOV from narrowing during a turn then popping back on recovery.
+
+```js
+_fovSpeed += (speed - _fovSpeed) * Math.min(1, dt * 1.5);
+targetFov += Math.min(_fovSpeed / 200, 1) * 35;
+```
+
+### Summary
+
+| Situation | Before | After | 
+|---|---|---|
+| Full throttle punch | FOV widens at same rate as everything else | Fast lurch (rate 20) |
+| Chop throttle | Acceleration term spiked from turn forces | Slow, subtle narrow (rate 3, throttle delta) |
+| Airbrake deploy | Instant -15° FOV snap | Gradual tunnel (negative diff = rate 3) |
+| Turn | Speed drop narrowed FOV, pop on recovery | No FOV change (_fovSpeed smoothed + throttle delta ignores turn) |
+| Turn end + recovery | Acceleration normalization lurched FOV | Clean — nothing happens |
+
+---
+
 ## **11/06/2026 — Post-processing pipeline: EffectComposer, color grading, vignette + real sun + sky + lighting**
 
 **What changed:** Added full post-processing stack (EffectComposer → RenderPass → custom CinematicPass) and replaced the flat static sky with a procedural atmospheric sky + real sun with matching directional light.
@@ -186,6 +250,7 @@ camera.position
     .add(gWorldOffset)
     .add(vib.clone().applyQuaternion(plane.quaternion));
 ```
+
 
 ---
 
