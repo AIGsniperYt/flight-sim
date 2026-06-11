@@ -7,6 +7,155 @@
 > - Bugs: problem → cause → fix. Features: show the key before/after.
 > - `---` between entries.
 
+## **11/06/2026 — Post-processing pipeline: EffectComposer, color grading, vignette + real sun + sky + lighting**
+
+**What changed:** Added full post-processing stack (EffectComposer → RenderPass → custom CinematicPass) and replaced the flat static sky with a procedural atmospheric sky + real sun with matching directional light.
+
+### 1. EffectComposer + CinematicPass (`main.js`)
+
+Wrapped the single `renderer.render()` call with an EffectComposer pipeline. The custom CinematicPass applies:
+- Filmic tone curve (ACES approximation)
+- Contrast, saturation control
+- Shadows/highlights color grading (warm/cool tint split)
+- Vignette (screen-edge darkening)
+
+```js
+// Before: single render call, no post-processing
+renderer.render(scene, camera);
+
+// After: multi-pass pipeline
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+composer.addPass(new ShaderPass(CinematicShader));
+composer.render();
+```
+
+**Iteration history (color grading):**
+
+| Pass | Issue | Fix |
+|------|-------|-----|
+| Initial: saturation 1.3, contrast 1.15, teal shadows + warm highlights, blend 0.4, exposure 1.2 | Gamey, bright, high contrast — felt nostalgic | Lowered sat→0.92, contrast→1.0, switched to subtle warm grade, exposure→0.85 |
+| Too subtle — colour grading not doing much | Color barely visible | Cranked to max: sat 0.8, contrast 1.25, amber shadows + golden highlights, blend 1.0, exposure 0.65 |
+| Max was still too nightly | Warm amber + low exposure = dusk | Brought back: sat 0.85, contrast 1.2, half warmth, blend 0.6, exposure 0.9 |
+| Sunset request | Not warm enough | shadows→(0.06,0.03,0), highlights→(0.12,0.06,-0.02), sat→0.85, exposure→0.7 |
+
+### 2. Flat sky → procedural Sky addon (`main.js`)
+
+Replaced the single-color scene background with Three.js's Sky addon (Preetham atmospheric scattering model). Sky now has a gradient from warm horizon to deep zenith with a real sun position.
+
+```js
+// Before: flat orange color, no sky gradient
+scene.background = new THREE.Color(0xcc7733);
+scene.fog = new THREE.FogExp2(0xcc7733, 0.0003);
+renderer.setClearColor(0xcc7733);
+
+// After: procedural atmospheric sky + sun + warm haze fog
+scene.background = new THREE.Color(0x000000);
+renderer.setClearColor(0x000000);
+
+const sky = new Sky();
+sky.scale.setScalar(450000);
+sky.uniforms.turbidity.value = 8;
+sky.uniforms.rayleigh.value = 2;
+sky.uniforms.sunPosition.value.copy(sunPos);
+scene.add(sky);
+
+scene.fog = new THREE.FogExp2(0xcc8844, 0.0002); // warm horizon haze
+```
+
+**Sky/fog color iteration:**
+- `0x87ceeb` (original pale sky) → `0x2a4a6a` (too dark, night-like) → `0x4a7a9a` (better but still flat) → `0x3a5a7a` (deeper haze) → `0x1a2235` (twilight) → `0x2a1a0a` (too dark to see orange) → `0x9a5a2a` (still too dark) → `0xcc7733` (visible orange, but still flat)
+
+### 3. Sun sphere + glow (`main.js`)
+
+Added a visible sun in the sky with a warm glow sprite and a bright sphere.
+
+```js
+// Sun glow sprite
+const sunGlow = new THREE.Sprite(
+    new THREE.SpriteMaterial({ map: glowCanvasTexture, blending: THREE.AdditiveBlending })
+);
+sunGlow.position.copy(sunDir.clone().multiplyScalar(90000));
+sunGlow.scale.setScalar(25000);
+
+// Sun sphere
+const sunSphere = new THREE.Mesh(
+    new THREE.SphereGeometry(8000, 16, 16),
+    new THREE.MeshBasicMaterial({ color: 0xffcc66, fog: false })
+);
+sunSphere.position.copy(sunDir.clone().multiplyScalar(90000));
+```
+
+**Bug — "sun is black":** Multiple causes:
+1. Initial sphere radius 4000 + color `0xffdd88` was too small/dim after CinematicPass processing (exposure 0.7 + filmic tone curve crushed the brightness)
+2. No glow sprite — the sun had no visible halo
+3. Sun sphere needed `fog: false` + `depthWrite: false` to avoid being fogged out at 90k distance
+4. **Fix:** double the radius (4000→8000→5000), brightened color (`0xffdd88`→`0xffeeaa`→`0xffcc66`), added additive glow sprite (50k→25k scale), proper material flags
+
+### 4. Directional light matched to sun position (`main.js`)
+
+```js
+// Before: static light pointing at (0.408, 0.816, 0.408) — didn't match sky at all
+const light = new THREE.DirectionalLight(0xffffff, 1);
+light.position.set(50, 100, 50).normalize();
+
+// After: light matches the actual sun direction
+const sunDir = sunPosition.clone().normalize();
+const sunLight = new THREE.DirectionalLight(0xffddaa, 1.0); // warm sunset light
+sunLight.position.copy(sunDir.clone().multiplyScalar(100000));
+const ambientLight = new THREE.AmbientLight(0x223355, 0.4); // cool sky fill
+```
+
+**Issue:** Old directional light at (50,100,50) pointed in an arbitrary direction while the visible sun was in a completely different spot in the sky. Terrain lit from the wrong angle. **Fix:** Light position now matches the Sky addon's `sunPosition`, with a warm sunset color. Added cool blue ambient for shadow fill.
+
+### 5. Vignette tuning
+
+Reduced from aggressive 0.65→0.5→0.15 as sky brightness increased. Lower vignette lets the sky breathe and prevents the whole scene from looking dark.
+
+### 6. Final tuning pass — sun higher, shadows softer, sun less blinding
+
+User feedback: shadows in terrain bumps too dark, sun too bright to look at, sun too low. Fixed:
+
+| Change | Before | After | Reason |
+|--------|--------|-------|--------|
+| **Sun elevation** | 12° | **25°** | Higher sun = less harsh horizon shadows, easier to look at |
+| **Sun glow scale** | 50000 | **25000** | Smaller halo, less blinding |
+| **Sun sphere color** | `0xffeeaa` | **`0xffcc66`** | Warmer golden, less white-hot |
+| **Directional light** | 1.2 | **1.0** | Softer shadow contrast |
+| **Ambient fill** | 0.25 | **0.4** | More light in terrain crevices |
+| **Cinematic contrast** | 1.3 | **1.2** | Less crushed shadows |
+| **Color grade blend** | 0.85 | **0.7** | More subtle, less aggressive |
+| **Exposure** | 0.7 | **0.75** | Slightly brighter overall |
+
+```js
+// Before (too harsh)
+sun elevation: 12°, sun color: 0xffeeaa, dir light: 1.2, ambient: 0.25
+CinematicPass: contrast 1.3, blend 0.85, exposure 0.7
+
+// After (balanced dramatic)
+sun elevation: 25°, sun color: 0xffcc66, dir light: 1.0, ambient: 0.4
+CinematicPass: contrast 1.2, blend 0.7, exposure 0.75
+```
+
+### Current CinematicPass state (`main.js`)
+```js
+vignetteIntensity: 0.12,
+vignetteFeather: 0.25,
+saturation: 0.8,
+contrast: 1.2,
+shadowsColor: new THREE.Color(0.04, 0.02, 0.0),    // subtle warm
+highlightsColor: new THREE.Color(0.08, 0.04, -0.01), // warm golden
+colorGradeBlend: 0.7,
+exposure: 0.75
+```
+
+---
+
+
 ## **11/06/2026 — FOV tuned: speed dominant, throttle minimal, position lerp**
 
 Still, it feels like throttle has more control over dynamic fov than speed, which likely is counterintuitive and shouldnt be the case, lets tweak so throttle has less impact and speed has the stronger influence

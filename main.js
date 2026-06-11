@@ -3,6 +3,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+import { Sky } from 'three/addons/objects/Sky.js';
 import { updateChunks, getChunkStats, getLodGeometryStats, toggleGapMode, getShowGaps, toggleWireframe, getWireframe, setCraterData, getMaxCraters } from './src/world.js';
 import { getTerrainStats, getHeightScaled } from './src/terrain.js';
 import * as combat from './src/combat.js';
@@ -29,8 +30,7 @@ import {
 } from './src/physics.js';
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0xcc7733);
-scene.fog = new THREE.FogExp2(0xcc7733, 0.0003);
+scene.background = new THREE.Color(0x000000);
 
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 100000);
 camera.position.y = 10;
@@ -38,8 +38,58 @@ camera.position.y = 10;
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
 document.body.appendChild(renderer.domElement);
-renderer.setClearColor(0xcc7733);
+renderer.setClearColor(0x000000);
 renderer.outputEncoding = THREE.sRGBEncoding;
+
+// Procedural sky dome with real sun
+const sky = new Sky();
+sky.scale.setScalar(450000);
+scene.add(sky);
+
+const skyUniforms = sky.material.uniforms;
+skyUniforms.turbidity.value = 8;
+skyUniforms.rayleigh.value = 2;
+skyUniforms.mieCoefficient.value = 0.005;
+skyUniforms.mieDirectionalG.value = 0.8;
+
+const sunPosition = new THREE.Vector3();
+const elevation = THREE.MathUtils.degToRad(25);
+const azimuth = THREE.MathUtils.degToRad(180);
+sunPosition.setFromSphericalCoords(1, Math.PI / 2 - elevation, azimuth);
+skyUniforms.sunPosition.value.copy(sunPosition);
+
+// Warm haze fog to match sunset horizon
+scene.fog = new THREE.FogExp2(0xcc8844, 0.0002);
+
+// Sun glow sprite (radial gradient canvas)
+const glowCanvas = document.createElement('canvas');
+glowCanvas.width = 128;
+glowCanvas.height = 128;
+const gctx = glowCanvas.getContext('2d');
+const grad = gctx.createRadialGradient(64, 64, 0, 64, 64, 64);
+grad.addColorStop(0, 'rgba(255,220,150,1)');
+grad.addColorStop(0.15, 'rgba(255,180,80,0.8)');
+grad.addColorStop(0.4, 'rgba(255,120,40,0.3)');
+grad.addColorStop(0.7, 'rgba(255,60,20,0.08)');
+grad.addColorStop(1, 'rgba(255,0,0,0)');
+gctx.fillStyle = grad;
+gctx.fillRect(0, 0, 128, 128);
+const glowTex = new THREE.CanvasTexture(glowCanvas);
+
+const sunGlow = new THREE.Sprite(
+    new THREE.SpriteMaterial({ map: glowTex, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, fog: false })
+);
+sunGlow.position.copy(sunPosition.clone().multiplyScalar(90000));
+sunGlow.scale.setScalar(25000);
+scene.add(sunGlow);
+
+// Visible sun sphere
+const sunSphere = new THREE.Mesh(
+    new THREE.SphereGeometry(5000, 16, 16),
+    new THREE.MeshBasicMaterial({ color: 0xffcc66, fog: false, depthWrite: false })
+);
+sunSphere.position.copy(sunPosition.clone().multiplyScalar(90000));
+scene.add(sunSphere);
 renderer.domElement.addEventListener('contextmenu', (event) => event.preventDefault());
 
 const composer = new EffectComposer(renderer);
@@ -48,14 +98,14 @@ composer.addPass(new RenderPass(scene, camera));
 const CinematicShader = {
     uniforms: {
         tDiffuse: { value: null },
-        vignetteIntensity: { value: 0.15 },
+        vignetteIntensity: { value: 0.12 },
         vignetteFeather: { value: 0.25 },
-        saturation: { value: 0.85 },
-        contrast: { value: 1.3 },
-        shadowsColor: { value: new THREE.Color(0.06, 0.03, 0.0) },
-        highlightsColor: { value: new THREE.Color(0.12, 0.06, -0.02) },
-        colorGradeBlend: { value: 0.85 },
-        exposure: { value: 0.7 }
+        saturation: { value: 0.8 },
+        contrast: { value: 1.2 },
+        shadowsColor: { value: new THREE.Color(0.04, 0.02, 0.0) },
+        highlightsColor: { value: new THREE.Color(0.08, 0.04, -0.01) },
+        colorGradeBlend: { value: 0.7 },
+        exposure: { value: 0.75 }
     },
     vertexShader: `
         varying vec2 vUv;
@@ -133,9 +183,13 @@ cameraControls.minDistance = 8;
 cameraControls.maxDistance = 220;
 cameraControls.enabled = false;
 
-const light = new THREE.DirectionalLight(0xffffff, 1);
-light.position.set(50, 100, 50).normalize();
-scene.add(light);
+const sunDir = sunPosition.clone().normalize();
+const sunLight = new THREE.DirectionalLight(0xffddaa, 1.0);
+sunLight.position.copy(sunDir.clone().multiplyScalar(100000));
+scene.add(sunLight);
+
+const ambientLight = new THREE.AmbientLight(0x223355, 0.4);
+scene.add(ambientLight);
 
 initPhysics(scene);
 combat.init(scene);
