@@ -1,5 +1,8 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { updateChunks, getChunkStats, getLodGeometryStats, toggleGapMode, getShowGaps, toggleWireframe, getWireframe, setCraterData, getMaxCraters } from './src/world.js';
 import { getTerrainStats, getHeightScaled } from './src/terrain.js';
 import * as combat from './src/combat.js';
@@ -26,8 +29,8 @@ import {
 } from './src/physics.js';
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x87ceeb);
-scene.fog = new THREE.FogExp2(0x87ceeb, 0.0004);
+scene.background = new THREE.Color(0x2a1815);
+scene.fog = new THREE.FogExp2(0x2a1815, 0.0003);
 
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 100000);
 camera.position.y = 10;
@@ -35,8 +38,87 @@ camera.position.y = 10;
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
 document.body.appendChild(renderer.domElement);
-renderer.setClearColor(0x87ceeb);
+renderer.setClearColor(0x2a1815);
+renderer.outputEncoding = THREE.sRGBEncoding;
 renderer.domElement.addEventListener('contextmenu', (event) => event.preventDefault());
+
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+
+const CinematicShader = {
+    uniforms: {
+        tDiffuse: { value: null },
+        vignetteIntensity: { value: 0.6 },
+        vignetteFeather: { value: 0.35 },
+        saturation: { value: 0.7 },
+        contrast: { value: 1.3 },
+        shadowsColor: { value: new THREE.Color(0.0, 0.03, 0.10) },
+        highlightsColor: { value: new THREE.Color(0.12, 0.06, 0.0) },
+        colorGradeBlend: { value: 0.85 },
+        exposure: { value: 0.7 }
+    },
+    vertexShader: `
+        varying vec2 vUv;
+        void main() {
+            vUv = uv;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+    `,
+    fragmentShader: `
+        uniform sampler2D tDiffuse;
+        uniform float vignetteIntensity;
+        uniform float vignetteFeather;
+        uniform float saturation;
+        uniform float contrast;
+        uniform vec3 shadowsColor;
+        uniform vec3 highlightsColor;
+        uniform float colorGradeBlend;
+        uniform float exposure;
+        varying vec2 vUv;
+
+        vec3 filmicToneMap(vec3 c) {
+            c *= exposure;
+            float a = 2.51;
+            float b = 0.03;
+            float c_ = 2.43;
+            float d = 0.59;
+            float e = 0.14;
+            return clamp((c * (a * c + b)) / (c * (c_ * c + d) + e), 0.0, 1.0);
+        }
+
+        void main() {
+            vec4 color = texture2D(tDiffuse, vUv);
+
+            // Contrast
+            color.rgb = (color.rgb - 0.5) * contrast + 0.5;
+
+            // Saturation
+            float lum = dot(color.rgb, vec3(0.299, 0.587, 0.114));
+            color.rgb = mix(vec3(lum), color.rgb, saturation);
+
+            // Shadows/highlights color grade
+            vec3 graded = color.rgb;
+            graded += (1.0 - lum) * shadowsColor;
+            graded += lum * highlightsColor;
+            color.rgb = mix(color.rgb, graded, colorGradeBlend);
+
+            // Filmic tone map
+            color.rgb = filmicToneMap(color.rgb);
+
+            // Vignette
+            vec2 center = vUv - 0.5;
+            float dist = length(center);
+            float vignette = 1.0 - smoothstep(0.15, 0.5 + vignetteFeather, dist * 1.5) * vignetteIntensity;
+            color.rgb *= vignette;
+
+            gl_FragColor = color;
+        }
+    `
+};
+
+const cinematicPass = new ShaderPass(CinematicShader);
+cinematicPass.renderToScreen = true;
+composer.addPass(cinematicPass);
 
 const cameraControls = new OrbitControls(camera, renderer.domElement);
 cameraControls.enableDamping = true;
@@ -1737,7 +1819,7 @@ function animate() {
     }
 
     // 6. WebGL Draw Call (before DOM updates for GPU/CPU parallelism)
-    renderer.render(scene, camera);
+    composer.render();
 
     // 7. Post-Render UI Updates
     updateDebug(dt * 1000);
@@ -1758,4 +1840,5 @@ window.addEventListener('resize', () => {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
+    composer.setSize(window.innerWidth, window.innerHeight);
 });
