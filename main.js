@@ -1319,8 +1319,8 @@ function updateOrbitCamera(dt) {
 
     // Dynamic FOV — speed widens, deceleration/airbrakes narrow (thrown forward = tunnel focus)
     let targetFov = 60;
-    targetFov += Math.min(speed / 250, 1) * 30;
-    targetFov += thr * 20;
+    targetFov += Math.min(speed / 200, 1) * 35;
+    targetFov += thr * 6;
     targetFov += THREE.MathUtils.clamp(localAccel.z * 2, -10, 0);
     if (airbrakes) targetFov -= 15;
     _currentFov += (targetFov - _currentFov) * (1 - Math.exp(-20 * dt));

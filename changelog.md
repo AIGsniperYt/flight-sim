@@ -7,6 +7,34 @@
 > - Bugs: problem → cause → fix. Features: show the key before/after.
 > - `---` between entries.
 
+## **11/06/2026 — FOV tuned: speed dominant, throttle minimal, position lerp**
+
+Still, it feels like throttle has more control over dynamic fov than speed, which likely is counterintuitive and shouldnt be the case, lets tweak so throttle has less impact and speed has the stronger influence
+
+**Fix:** speed threshold lowered 250→200 m/s, max contribution raised 30→35°. Throttle cut 20°→6° — barely perceptible now. Speed is the dominant FOV input.
+
+```js
+// Before
+targetFov = 60 + min(speed/250,1)*30 + thr*20 + clamp(localAccel.z*2,-10,0) + (airbrakes?-15:0)
+
+// After  
+targetFov = 60 + min(speed/200,1)*35 + thr*6 + clamp(localAccel.z*2,-10,0) + (airbrakes?-15:0)
+```
+
+**Also added:** chase camera position now lerps toward target at rate 15 instead of snapping frame-to-frame. All movement (turns, climbs, airbrake push, G-body, vibration) feels smooth and springy.
+
+```js
+_camTarget
+    .copy(plane.position)
+    .add(worldOffset)
+    .addScaledVector(_camBackDir, _smoothPull)
+    .add(gWorldOffset);
+_camTarget.add(vib.clone().applyQuaternion(plane.quaternion));
+camera.position.lerp(_camTarget, 1 - Math.exp(-15 * dt));
+```
+
+---
+
 ## **11/06/2026 — Camera immersiveness: deceleration + airbrake feedback + position lerp**
 
 ### Dynamic FOV (`main.js`)
