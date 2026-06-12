@@ -112,7 +112,8 @@ const CinematicShader = {
         shadowsColor: { value: new THREE.Color(0.04, 0.02, 0.0) },
         highlightsColor: { value: new THREE.Color(0.08, 0.04, -0.01) },
         colorGradeBlend: { value: 0.7 },
-        exposure: { value: 0.75 }
+        exposure: { value: 0.75 },
+        gForce: { value: 0 }
     },
     vertexShader: `
         varying vec2 vUv;
@@ -131,6 +132,7 @@ const CinematicShader = {
         uniform vec3 highlightsColor;
         uniform float colorGradeBlend;
         uniform float exposure;
+        uniform float gForce;
         varying vec2 vUv;
 
         vec3 filmicToneMap(vec3 c) {
@@ -162,10 +164,15 @@ const CinematicShader = {
             // Filmic tone map
             color.rgb = filmicToneMap(color.rgb);
 
-            // Vignette
+            // G-force desaturation (grey-out under heavy G)
+            float gLum = dot(color.rgb, vec3(0.299, 0.587, 0.114));
+            color.rgb = mix(color.rgb, vec3(gLum), gForce);
+
+            // Vignette (with subtle G-force boost)
             vec2 center = vUv - 0.5;
             float dist = length(center);
-            float vignette = 1.0 - smoothstep(0.15, 0.5 + vignetteFeather, dist * 1.5) * vignetteIntensity;
+            float gV = gForce * 0.2;
+            float vignette = 1.0 - smoothstep(0.15 - gV * 0.05, 0.5 + vignetteFeather, dist * 1.5) * (vignetteIntensity + gV * 0.5);
             color.rgb *= vignette;
 
             gl_FragColor = color;
@@ -228,7 +235,7 @@ const debugVectorLegend = getDebugVectorLegend().map((entry) =>
 
 let cameraMode = 'chase';
 let debugMode = 0;
-let gForceEffectEnabled = false;
+let gForceEffectEnabled = true;
 let radarAngle = 0;
 const radarSweepSpeed = 2.0;
 const radarContactTimeout = 4;
@@ -1348,30 +1355,50 @@ function updateStallWarning() {
 }
 
 function updateGForceEffect() {
-  if (!gForceEffectEnabled) { gForceOverlay.style.opacity = '0'; return; }
+  if (!gForceEffectEnabled) {
+    gForceOverlay.style.opacity = '0';
+    cinematicPass.uniforms.gForce.value = 0;
+    return;
+  }
   const g = getFlightState().gForce;
   const absG = Math.abs(g);
+
+  // Realistic G-LOC thresholds (shifted up for milder daily feel):
+  // 4-5G   peripheral loss starts
+  // 5-6G   tunnel vision visible, grey-out begins
+  // 6.5-8G colour drains, strong tunnel
+  // 8-10G  severe grey-out, near blackout
+
   const overG = Math.max(0, absG - 4);
   const severity = Math.min(1, overG / 5);
   const tunnelNarrow = Math.min(1, Math.max(0, absG - 5) / 4);
-
-  const darken = severity * 0.85;
-  const tunnelSize = 1 - tunnelNarrow * 0.55;
   const redTint = g < 0.8 ? Math.min(1, (0.8 - g) * 5) * 0.3 : 0;
 
+  // Greyscale starts at 6.5G (peripheral colour loss → full grey-out)
+  const overGDesat = Math.max(0, absG - 6.5);
+  const desatSeverity = Math.min(1, overGDesat / 3);
+  cinematicPass.uniforms.gForce.value = desatSeverity;
+
+  // CSS overlay: vignette tunnel + red tint
   if (severity > 0 || redTint > 0) {
+    const darken = severity * 0.85;
+    const tunnelSize = 1 - tunnelNarrow * 0.55;
     gForceOverlay.style.opacity = Math.max(severity, redTint).toFixed(3);
-    gForceOverlay.style.boxShadow = `inset 0 0 ${120 + severity * 200}px rgba(0,0,0,${darken})`;
+    gForceOverlay.style.boxShadow = `inset 0 0 ${120 + severity * 200}px rgba(0,0,0,${darken * 0.6})`;
     gForceOverlay.style.background = `radial-gradient(circle at center,
-      transparent ${tunnelSize * 50}%,
-      rgba(0,0,0,${darken * 0.7}) ${tunnelSize * 70}%,
-      rgba(0,0,0,${darken}) ${tunnelSize * 90}%
+      transparent ${tunnelSize * 30}%,
+      rgba(0,0,0,${darken * 0.15}) ${tunnelSize * 50}%,
+      rgba(0,0,0,${darken * 0.4}) ${tunnelSize * 70}%,
+      rgba(0,0,0,${darken * 0.7}) ${tunnelSize * 85}%,
+      rgba(0,0,0,${darken}) 100%
     )`;
     if (redTint > 0) {
       gForceOverlay.style.background = `radial-gradient(circle at center,
-        rgba(60,0,0,${redTint * 0.15}) ${tunnelSize * 40}%,
-        rgba(80,0,0,${redTint * 0.3}) ${tunnelSize * 65}%,
-        rgba(40,0,0,${redTint * 0.5}) ${tunnelSize * 85}%
+        transparent ${tunnelSize * 30}%,
+        rgba(60,0,0,${redTint * 0.1}) ${tunnelSize * 50}%,
+        rgba(80,0,0,${redTint * 0.2}) ${tunnelSize * 70}%,
+        rgba(60,0,0,${redTint * 0.35}) ${tunnelSize * 85}%,
+        rgba(40,0,0,${redTint * 0.5}) 100%
       )`;
     }
   } else {
