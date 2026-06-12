@@ -196,7 +196,32 @@ export function getPlayerHealth() { return playerHealth; }
 export function getMaxPlayerHealth() { return MAX_PLAYER_HEALTH; }
 export function getHitThisFrame() { return _hitThisFrame; }
 export function getKillThisFrame() { return _killThisFrame; }
-export function resetPlayer() { playerHealth = MAX_PLAYER_HEALTH; }
+export function resetPlayer() {
+    playerHealth = MAX_PLAYER_HEALTH;
+    _playerLockTargetId = null;
+    _playerLockTimer = 0;
+    _playerLockState = 'none';
+}
+
+export function clearProjectiles() {
+    if (_group) {
+        for (const m of _missiles) {
+            _group.remove(m.mesh);
+        }
+        for (const b of _bullets) {
+            _group.remove(b.mesh);
+        }
+        for (const e of _explosions) {
+            _group.remove(e);
+            e.geometry.dispose();
+            e.material.dispose();
+        }
+    }
+    _missiles = [];
+    _bullets = [];
+    _explosions = [];
+}
+
 
 export function getLockWarnings() {
     const warnings = [];

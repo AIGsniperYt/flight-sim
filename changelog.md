@@ -7,6 +7,78 @@
 > - Bugs: problem → cause → fix. Features: show the key before/after.
 > - `---` between entries.
 
+---
+
+## **12/06/2026 — Debug mode state machine (O key replaces F5/F6)**
+
+F5 (toggle debug panel) and F6 (toggle debug arrows) was windows centered, which wasnt accessible for all laptop/PC users, so instead they were replaced with a single **O** key that cycles through 4 states: Off → Both ON → Arrows only → Panel only.
+
+```js
+// Before: two separate booleans, two keys
+let debugVisible = false;
+let debugArrowsVisible = false;
+
+function applyDebugArrowVisibility() {
+    setDebugVectorsVisible(debugVisible && debugArrowsVisible);
+}
+
+// F5 -> debugVisible toggle, F6 -> debugArrowsVisible toggle
+
+// After: single state machine
+let debugMode = 0;  // 0=off, 1=both, 2=arrows, 3=panel
+
+function applyDebugVisibility() {
+    const panelVisible = debugMode === 1 || debugMode === 3;
+    const arrowsVisible = debugMode === 1 || debugMode === 2;
+    debugDiv.style.display = panelVisible ? 'block' : 'none';
+    setDebugVectorsVisible(arrowsVisible);
+}
+
+// O -> cycles debugMode (0→1→2→3→0)
+```
+
+Arrows are now independently visible without the debug panel (state 2), and the current mode is shown in the debug overlay.
+
+---
+
+## **11/06/2026 — Anti-aliasing: FXAA + pixel ratio fix**
+
+**Problem:** After adding the EffectComposer pipeline, scene is rendered to a render target instead of directly to screen. WebGL `antialias: true` (MSAA) only applies to the default framebuffer, not to render targets — so all geometry (plane, wind trail, terrain) became visibly aliased/pixelated. SMAA pass was tried but was ineffective (area/search textures load async).
+
+**Fix 1 — FXAA ShaderPass:** Replaced SMAA with FXAA (NVIDIA's Fast Approximate AA) as a post-process pass in the EffectComposer pipeline. It runs after RenderPass, before CinematicPass.
+
+```js
+// Before: SMAA pass (ineffective)
+import { SMAAPass } from 'three/addons/postprocessing/SMAAPass.js';
+const smaaPass = new SMAAPass(window.innerWidth, window.innerHeight);
+composer.addPass(smaaPass);
+
+// After: FXAA shader pass
+import { FXAAShader } from 'three/addons/shaders/FXAAShader.js';
+const fxaaPass = new ShaderPass(FXAAShader);
+const pixelRatio = renderer.getPixelRatio();
+fxaaPass.uniforms.resolution.value.set(1 / (window.innerWidth * pixelRatio), 1 / (window.innerHeight * pixelRatio));
+composer.addPass(fxaaPass);
+```
+
+**Fix 2 — Renderer pixel ratio:** Ensured the renderer uses the device's native pixel ratio (capped at 2x) so canvas resolution matches the display. Combined with FXAA, this gives clean anti-aliased edges.
+
+```js
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+```
+
+**Resize handler** also updates FXAA resolution uniform:
+```js
+window.addEventListener('resize', () => {
+    const pr = renderer.getPixelRatio();
+    fxaaPass.uniforms.resolution.value.set(1 / (window.innerWidth * pr), 1 / (window.innerHeight * pr));
+});
+```
+
+It's smoother now, but still not as smooth as before. A solution is to render at higher pixel ratio and the browser downsamples, but it slows fps down too much so maybe some other time.S
+
+---
+
 ## **11/06/2026 — Final camera tuning: asymmetric FOV rates + throttle delta**
 
 **What changed:** Complete rewrite of dynamic FOV and camera pull to fix turn-induced FOV lurches and airbrake snappiness. Three core changes:

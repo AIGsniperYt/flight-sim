@@ -3,6 +3,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+import { FXAAShader } from 'three/addons/shaders/FXAAShader.js';
 import { Sky } from 'three/addons/objects/Sky.js';
 import { updateChunks, getChunkStats, getLodGeometryStats, toggleGapMode, getShowGaps, toggleWireframe, getWireframe, setCraterData, getMaxCraters } from './src/world.js';
 import { getTerrainStats, getHeightScaled } from './src/terrain.js';
@@ -36,6 +37,7 @@ const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerH
 camera.position.y = 10;
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 document.body.appendChild(renderer.domElement);
 renderer.setClearColor(0x000000);
@@ -94,6 +96,11 @@ renderer.domElement.addEventListener('contextmenu', (event) => event.preventDefa
 
 const composer = new EffectComposer(renderer);
 composer.addPass(new RenderPass(scene, camera));
+
+const fxaaPass = new ShaderPass(FXAAShader);
+const pixelRatio = renderer.getPixelRatio();
+fxaaPass.uniforms.resolution.value.set(1 / (window.innerWidth * pixelRatio), 1 / (window.innerHeight * pixelRatio));
+composer.addPass(fxaaPass);
 
 const CinematicShader = {
     uniforms: {
@@ -220,8 +227,7 @@ const debugVectorLegend = getDebugVectorLegend().map((entry) =>
 ).join(' ');
 
 let cameraMode = 'chase';
-let debugVisible = false;
-let debugArrowsVisible = false;
+let debugMode = 0;
 let gForceEffectEnabled = false;
 let radarAngle = 0;
 const radarSweepSpeed = 2.0;
@@ -235,8 +241,11 @@ let _lockMode = false;
 let _lockRot = 0;
 let _lockShakeTime = 0;
 
-function applyDebugArrowVisibility() {
-    setDebugVectorsVisible(debugVisible && debugArrowsVisible);
+function applyDebugVisibility() {
+    const panelVisible = debugMode === 1 || debugMode === 3;
+    const arrowsVisible = debugMode === 1 || debugMode === 2;
+    debugDiv.style.display = panelVisible ? 'block' : 'none';
+    setDebugVectorsVisible(arrowsVisible);
 }
 
 function resetChaseCamera() {
@@ -333,7 +342,6 @@ renderer.domElement.addEventListener('wheel', (event) => {
 }, { passive: true });
 
 resetChaseCamera();
-applyDebugArrowVisibility();
 
 function isOverThrottle(clientX, clientY) {
     const W = hudCanvas.width, H = hudCanvas.height;
@@ -366,6 +374,7 @@ debugDiv.style.maxWidth = '520px';
 debugDiv.style.maxHeight = '85vh';
 debugDiv.style.overflowY = 'auto';
 document.body.appendChild(debugDiv);
+applyDebugVisibility();
 
 // === F-16 HUD overlay (green combat HUD) ===
 const hudCanvas = document.createElement('canvas');
@@ -531,15 +540,10 @@ document.addEventListener('keydown', (event) => {
         event.preventDefault();
         hudVisible = !hudVisible;
         hudCanvas.style.display = hudVisible ? 'block' : 'none';
-    } else if (event.code === 'F5') {
+    } else if (event.code === 'KeyO' && !event.ctrlKey && !event.metaKey) {
         event.preventDefault();
-        debugVisible = !debugVisible;
-        debugDiv.style.display = debugVisible ? 'block' : 'none';
-        applyDebugArrowVisibility();
-    } else if (event.code === 'F6') {
-        event.preventDefault();
-        debugArrowsVisible = !debugArrowsVisible;
-        applyDebugArrowVisibility();
+        debugMode = (debugMode + 1) % 4;
+        applyDebugVisibility();
     } else if (event.code === 'KeyG' && !event.ctrlKey && !event.metaKey) {
         event.preventDefault();
         gForceEffectEnabled = !gForceEffectEnabled;
@@ -693,7 +697,7 @@ function updateDebug(dt) {
         const totalMB = (performance.memory.totalJSHeapSize / 1048576).toFixed(2);
         memUsage = `${usedMB} / ${totalMB} MB`;
     }
-    if (debugVisible) {
+    if (debugMode === 1 || debugMode === 3) {
         const stats = getChunkStats();
         const plane = getPlane();
         const flight = getFlightState();
@@ -749,7 +753,8 @@ function updateDebug(dt) {
             Thrust / Drag: ${fmt(flight.thrustToDrag, 2)}<br>
             Stall Speed: ${fmt(flight.stallSpeed, 1)} m/s<br>
             Forces L/D/T/W/Y: ${fmtForce(flight.lift)} / ${fmtForce(flight.drag)} / ${fmtForce(flight.thrust)} / ${fmtForce(flight.weight)} / ${fmtForce(flight.sideForce)}<br>
-            Vector Arrows: ${debugArrowsVisible ? 'on' : 'off'}<br>
+            Debug Mode: ${['OFF', 'Both ON', 'Arrows ON', 'Panel ON'][debugMode]}<br>
+            Vector Arrows: ${debugMode === 1 || debugMode === 2 ? 'on' : 'off'}<br>
             Forces/Motion: ${debugVectorLegend}<br>
             Wind Trail: <b>T</b> ${trailEnabled ? 'ON' : 'OFF'} (${trailPoints.length} pts)<br>
             Combat: ${combat.getMissileCount()} mis ${combat.getBulletCount()} bul ${combat.getEnemyCount()} ene<br>
@@ -1909,4 +1914,6 @@ window.addEventListener('resize', () => {
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
     composer.setSize(window.innerWidth, window.innerHeight);
+    const pr = renderer.getPixelRatio();
+    fxaaPass.uniforms.resolution.value.set(1 / (window.innerWidth * pr), 1 / (window.innerHeight * pr));
 });

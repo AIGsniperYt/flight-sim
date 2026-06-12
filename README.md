@@ -47,9 +47,8 @@ A browser-based 3D flight simulator built with Three.js featuring procedurally g
 | **M** | Toggle minimap |
 | **G** | Toggle G-force overlay |
 | **U** | Cycle wireframe mode (all LODs) |
-| **F5** | Toggle debug information panel |
-| **F6** | Toggle debug vector arrows |
-| **F7** | Toggle reference axes arrows |
+| **O** | Cycle debug mode: Off → Panel → Arrows → Both |
+| **F7** | Toggle HUD visibility |
 | **J** | Toggle chunk gap mode (dev/player) |
 | **K** | Toggle collisions on/off |
 | **P** | Cycle aircraft preset
