@@ -1596,8 +1596,38 @@ function initTrail() {
         blending: THREE.AdditiveBlending
     });
 
+    // Pre-allocate max-size geometry to avoid GC churn
+    const maxTubular = 96;
+    const radialSeg = 8;
+    const maxVerts = (maxTubular + 1) * (radialSeg + 1);
+    const maxIdx = maxTubular * radialSeg * 6;
+
+    const positions = new Float32Array(maxVerts * 3);
+    const uvs = new Float32Array(maxVerts * 2);
+    const normals = new Float32Array(maxVerts * 3);
+    const indices = new Uint32Array(maxIdx);
+
+    // Pre-fill index array (pattern is fixed for max tubular segments)
+    for (let i = 0; i < maxTubular; i++) {
+        for (let j = 0; j < radialSeg; j++) {
+            const a = i * (radialSeg + 1) + j;
+            const b = a + radialSeg + 1;
+            const base = (i * radialSeg + j) * 6;
+            indices[base] = a;
+            indices[base + 1] = b;
+            indices[base + 2] = a + 1;
+            indices[base + 3] = b;
+            indices[base + 4] = b + 1;
+            indices[base + 5] = a + 1;
+        }
+    }
+
     const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(3), 3));
+    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geo.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+    geo.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+    geo.setIndex(new THREE.BufferAttribute(indices, 1));
+    geo.setDrawRange(0, 0);
     trailMesh = new THREE.Mesh(geo, trailMaterial);
     trailMesh.frustumCulled = false;
     trailMesh.renderOrder = 998;
@@ -1605,18 +1635,18 @@ function initTrail() {
 }
 
 function buildTrailMesh() {
-    if (trailPoints.length < 3) return;
+    if (trailPoints.length < 3 || !trailMesh) return;
 
     const curve = new THREE.CatmullRomCurve3(trailPoints);
     const tubularSegments = Math.min(96, trailPoints.length * 2);
-    const radialSegments = 8;
+    const radialSeg = 8;
     const radiusMin = 0.4;
     const radiusMax = 12.0;
 
-    const vertCount = (tubularSegments + 1) * (radialSegments + 1);
-    const pos = new Float32Array(vertCount * 3);
-    const uvs = new Float32Array(vertCount * 2);
-    const idx = [];
+    const geo = trailMesh.geometry;
+    const pos = geo.attributes.position.array;
+    const uvs = geo.attributes.uv.array;
+    const norms = geo.attributes.normal.array;
 
     const p = new THREE.Vector3();
     const tan = new THREE.Vector3();
@@ -1636,33 +1666,44 @@ function buildTrailMesh() {
 
         const radius = radiusMin + (1 - t) * (radiusMax - radiusMin);
 
-        for (let j = 0; j <= radialSegments; j++) {
-            const theta = (j / radialSegments) * Math.PI * 2;
+        for (let j = 0; j <= radialSeg; j++) {
+            const theta = (j / radialSeg) * Math.PI * 2;
             const sin = Math.sin(theta);
             const cos = Math.cos(theta);
-            const vi = i * (radialSegments + 1) + j;
+            const vi = i * (radialSeg + 1) + j;
             const i3 = vi * 3;
             pos[i3] = p.x + (n.x * cos + b.x * sin) * radius;
             pos[i3 + 1] = p.y + (n.y * cos + b.y * sin) * radius;
             pos[i3 + 2] = p.z + (n.z * cos + b.z * sin) * radius;
             uvs[vi * 2] = t;
-            uvs[vi * 2 + 1] = j / radialSegments;
-            if (i < tubularSegments && j < radialSegments) {
-                const a = i * (radialSegments + 1) + j;
-                const b2 = a + radialSegments + 1;
-                idx.push(a, b2, a + 1, b2, b2 + 1, a + 1);
-            }
+            uvs[vi * 2 + 1] = j / radialSeg;
         }
     }
 
-    const newGeo = new THREE.BufferGeometry();
-    newGeo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-    newGeo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
-    newGeo.setIndex(idx);
-    newGeo.computeVertexNormals();
+    const activeVerts = (tubularSegments + 1) * (radialSeg + 1);
+    const activeIdx = tubularSegments * radialSeg * 6;
+    geo.setDrawRange(0, activeIdx);
+    geo.attributes.position.needsUpdate = true;
+    geo.attributes.uv.needsUpdate = true;
+    geo.attributes.normal.needsUpdate = true;
+    geo.index.needsUpdate = true;
 
-    if (trailMesh.geometry) trailMesh.geometry.dispose();
-    trailMesh.geometry = newGeo;
+    // Compute vertex normals in-place
+    const indexArr = geo.index.array;
+    for (let k = 0; k < activeVerts * 3; k++) norms[k] = 0;
+    for (let k = 0; k < activeIdx; k += 3) {
+        const ia = indexArr[k] * 3, ib = indexArr[k + 1] * 3, ic = indexArr[k + 2] * 3;
+        const ax = pos[ib] - pos[ia], ay = pos[ib + 1] - pos[ia + 1], az = pos[ib + 2] - pos[ia + 2];
+        const bx = pos[ic] - pos[ia], by = pos[ic + 1] - pos[ia + 1], bz = pos[ic + 2] - pos[ia + 2];
+        const nx = ay * bz - az * by, ny = az * bx - ax * bz, nz = ax * by - ay * bx;
+        norms[ia] += nx; norms[ia + 1] += ny; norms[ia + 2] += nz;
+        norms[ib] += nx; norms[ib + 1] += ny; norms[ib + 2] += nz;
+        norms[ic] += nx; norms[ic + 1] += ny; norms[ic + 2] += nz;
+    }
+    for (let k = 0; k < activeVerts * 3; k += 3) {
+        let len = Math.sqrt(norms[k] * norms[k] + norms[k + 1] * norms[k + 1] + norms[k + 2] * norms[k + 2]);
+        if (len > 0) { norms[k] /= len; norms[k + 1] /= len; norms[k + 2] /= len; }
+    }
 }
 
 function updateTrail() {
@@ -1831,6 +1872,7 @@ function animate() {
             _respawning = true;
             resetAircraft();
             combat.resetPlayer();
+            combat.clearProjectiles();
             trailPoints.length = 0;
             console.log('Respawned');
         } else if (!_respawning) {
@@ -1852,6 +1894,7 @@ function animate() {
     if (_playerDead && now - _playerDeathTime > 3000) {
         _playerDead = false;
         combat.resetPlayer();
+        combat.clearProjectiles();
         resetAircraft();
         trailPoints.length = 0;
         setFrozen(false);

@@ -9,6 +9,103 @@
 
 ---
 
+## **12/06/2026 — Memory & optimisation: disappearing chunks fix, directional LOD rings, GC reduction**
+
+**What changed:** Four fixes targeting memory leaks, GC thrashing, and terrain quality — bugfix for migration-originated ghost chunks, directional LOD ring shifting, numeric chunk keys, static trail buffers, and projectile cleanup on respawn.
+
+### 1. Bug fix: disappearing chunks (`src/world.js`)
+
+**Problem:** `migrateChunkLod` removed a chunk from its old bucket *before* confirming a free slot in the target bucket. If the target was full, `addChunkToBucket` failed silently — the chunk existed in `globalChunks` but in no render bucket, making it invisible forever.
+
+**Fix:** `migrateChunkLod` now checks `targetBucket.freeSlots.length === 0` before removing from the old LOD. If the target is full it returns `false`; `processMigrationQueue` breaks on failure, leaving the entry in the queue for retry next frame. `addChunkToBucket` returns `bool`, and the initial-add loop guards `globalChunks` insertion behind a successful add.
+
+```js
+// Before: remove then add — ghost on failure
+function migrateChunkLod(scene, chunkX, chunkZ, oldLod, newLod, wasHidden) {
+    removeChunkFromBucket(chunkX, chunkZ, oldLod, wasHidden);
+    addChunkToBucket(scene, chunkX, chunkZ, newLod);       // may fail silently
+    // chunk now in globalChunks but no bucket → invisible forever
+}
+
+// After: confirm target capacity before removal
+function migrateChunkLod(scene, chunkX, chunkZ, oldLod, newLod, wasHidden) {
+    const targetBucket = mergedMeshes[newLod];
+    if (targetBucket.freeSlots.length === 0) return false; // stay in old LOD
+    removeChunkFromBucket(chunkX, chunkZ, oldLod, wasHidden);
+    addChunkToBucket(scene, chunkX, chunkZ, newLod);
+    return true;
+}
+```
+
+### 2. Directional LOD rings (`src/world.js`)
+
+**Problem:** LOD rings were concentric squares centred on the camera chunk. Detail distance was equal in all directions — terrain behind the camera got the same high-detail budget as terrain in front.
+
+**Fix:** LOD ring centres now shift forward along the camera's horizontal view direction (`mid +5`, `far +12`, `ultra +25` chunks). A full rescan is triggered when the camera yaw changes ~15° (dot < 0.965) via `_lastScanDir` tracking. Per-ring chunk counts are identical to the concentric case — zero extra slot usage.
+
+```js
+// Before: concentric rings centred on camera chunk
+const dx = Math.abs(x - cameraChunkX);
+const dz = Math.abs(z - cameraChunkZ);
+if (dx <= RENDER_DISTANCE_MID && dz <= RENDER_DISTANCE_MID) lod = "mid";
+
+// After: rings shifted forward along camera direction
+const _dxMid = Math.abs(x - _midCX);
+const _dzMid = Math.abs(z - _midCZ);
+if (_dxMid <= RENDER_DISTANCE_MID && _dzMid <= RENDER_DISTANCE_MID) lod = "mid";
+```
+
+### 3. Numeric chunk keys — GC reduction (`src/world.js`)
+
+**Problem:** Chunk keys were `"${x},${z}"` strings. During a full scan (~40k positions) each concatenation allocates a new string, causing GC spikes.
+
+**Fix:** Encode `(x, z)` into a 32-bit integer key via `(x + 32768) | ((z + 32768) << 16)`. Map lookups with number keys in V8 are faster and allocate zero strings.
+
+```js
+// Before: string allocation per chunk
+const chunkKey = `${x},${z}`;
+
+// After: single integer, no allocation
+const chunkKey = (x + 32768) | ((z + 32768) << 16);
+```
+
+### 4. Static trail mesh buffers — GC reduction (`main.js`)
+
+**Problem:** `buildTrailMesh()` created a new `BufferGeometry` + `Float32BufferAttribute` arrays every single frame and disposed the old one — continuous GC churn.
+
+**Fix:** `initTrail()` pre-allocates max-size arrays (97 rings × 9 radial = 873 verts, 4608 indices) into a single `BufferGeometry`. `buildTrailMesh()` fills them in-place using `.array` references and controls visible range via `geometry.setDrawRange(0, activeIdx)`. Normals computed in-place from index array.
+
+```js
+// Before: new geometry every frame
+const newGeo = new THREE.BufferGeometry();
+newGeo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+newGeo.setIndex(idx);
+trailMesh.geometry.dispose();
+trailMesh.geometry = newGeo;
+
+// After: pre-allocated, updated in-place
+const geo = trailMesh.geometry;
+const pos = geo.attributes.position.array;
+// ... fill arrays directly ...
+geo.setDrawRange(0, activeIdx);
+geo.attributes.position.needsUpdate = true;
+```
+
+### 5. Projectile cleanup on respawn (`main.js`)
+
+**Problem:** After crash or combat death, active missiles, bullets, and explosion particles kept running their update loops and occupying GPU resources until they naturally expired.
+
+**Fix:** `combat.clearProjectiles()` called in both respawn branches (crash path + death path) to instantly remove all active projectiles and dispose their geometries/materials.
+
+```js
+// Both respawn paths now include:
+combat.resetPlayer();
+combat.clearProjectiles();   // ← added
+resetAircraft();
+```
+
+---
+
 ## **12/06/2026 — Debug mode state machine (O key replaces F5/F6)**
 
 F5 (toggle debug panel) and F6 (toggle debug arrows) was windows centered, which wasnt accessible for all laptop/PC users, so instead they were replaced with a single **O** key that cycles through 4 states: Off → Both ON → Arrows only → Panel only.

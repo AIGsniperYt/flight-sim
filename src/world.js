@@ -171,6 +171,7 @@ const _migrateQueue = new Map();
 const precomputedIndices = {};
 let initialized = false;
 let _lastCamCX = null, _lastCamCZ = null;
+let _lastScanDir = null;
 const _newActive = new Set();
 const _toAdd = [];
 const _toRemove = [];
@@ -484,7 +485,7 @@ function addChunkToBucket(scene, chunkX, chunkZ, lod) {
     
     if (slot === undefined) {
         console.warn("No free slots in bucket", lod);
-        return;
+        return false;
     }
 
     const pos = bucket.geometry.attributes.position.array;
@@ -519,13 +520,14 @@ function addChunkToBucket(scene, chunkX, chunkZ, lod) {
         new THREE.Vector3((chunkX + 1) * CHUNK_SIZE, range.max, (chunkZ + 1) * CHUNK_SIZE)
     );
 
-    const chunkKey = `${chunkX},${chunkZ}`;
+    const chunkKey = (chunkX + 32768) | ((chunkZ + 32768) << 16);
     bucket.activeChunks.set(chunkKey, { slot, bbox });
+    return true;
 }
 
 function removeChunkFromBucket(chunkX, chunkZ, lod, skipVisDec = false) {
     const bucket = mergedMeshes[lod];
-    const chunkKey = `${chunkX},${chunkZ}`;
+    const chunkKey = (chunkX + 32768) | ((chunkZ + 32768) << 16);
     const chunkData = bucket.activeChunks.get(chunkKey);
     
     if (!chunkData) return;
@@ -550,7 +552,7 @@ function removeChunkFromBucket(chunkX, chunkZ, lod, skipVisDec = false) {
 
 function hideChunkInBucket(chunkX, chunkZ, lod) {
     const bucket = mergedMeshes[lod];
-    const chunkKey = `${chunkX},${chunkZ}`;
+    const chunkKey = (chunkX + 32768) | ((chunkZ + 32768) << 16);
     const chunkData = bucket.activeChunks.get(chunkKey);
     if (!chunkData) return;
 
@@ -569,7 +571,7 @@ function hideChunkInBucket(chunkX, chunkZ, lod) {
 
 function unhideChunkInBucket(chunkX, chunkZ, lod) {
     const bucket = mergedMeshes[lod];
-    const chunkKey = `${chunkX},${chunkZ}`;
+    const chunkKey = (chunkX + 32768) | ((chunkZ + 32768) << 16);
     const chunkData = bucket.activeChunks.get(chunkKey);
     if (!chunkData) return;
 
@@ -587,11 +589,16 @@ function unhideChunkInBucket(chunkX, chunkZ, lod) {
 }
 
 function migrateChunkLod(scene, chunkX, chunkZ, oldLod, newLod, wasHidden) {
+    const targetBucket = mergedMeshes[newLod];
+    if (targetBucket.freeSlots.length === 0) {
+        return false;
+    }
     removeChunkFromBucket(chunkX, chunkZ, oldLod, wasHidden);
     addChunkToBucket(scene, chunkX, chunkZ, newLod);
     if (!wasHidden) {
         unhideChunkInBucket(chunkX, chunkZ, newLod);
     }
+    return true;
 }
 
 function enqueueMigration(x, z, newLod, chunkKey) {
@@ -636,7 +643,9 @@ function processMigrationQueue(scene, budget, outwardOnly = false) {
         const isOutward = LOD_RANK[newLod] > LOD_RANK[renderLod];
         if (outwardOnly && !isOutward) continue;
 
-        migrateChunkLod(scene, item.x, item.z, renderLod, newLod, entry.hidden);
+        if (!migrateChunkLod(scene, item.x, item.z, renderLod, newLod, entry.hidden)) {
+            break;
+        }
         entry.renderLod = newLod;
         entry.lod = newLod;
         _migrateQueue.delete(chunkKey);
@@ -651,6 +660,22 @@ export function updateChunks(scene, camera, frustum, vx = 0, vz = 0) {
     const cameraChunkX = Math.floor(camera.position.x / CHUNK_SIZE);
     const cameraChunkZ = Math.floor(camera.position.z / CHUNK_SIZE);
 
+    // Camera direction for directional LOD rings
+    _camDir.set(0, 0, 0);
+    camera.getWorldDirection(_camDir);
+    const _hdx = _camDir.x;
+    const _hdz = _camDir.z;
+    const _hLen = Math.sqrt(_hdx * _hdx + _hdz * _hdz);
+    const ndx = _hLen > 0.001 ? _hdx / _hLen : 1;
+    const ndz = _hLen > 0.001 ? _hdz / _hLen : 0;
+
+    // Trigger full scan when camera rotates ~15 degrees
+    if (_lastScanDir === null || (ndx * _lastScanDir.x + ndz * _lastScanDir.z) < 0.965) {
+        if (!_lastScanDir) _lastScanDir = new THREE.Vector3();
+        _lastScanDir.set(ndx, 0, ndz);
+        _lastCamCX = null;
+    }
+
     const vThreshold = 10;
     const extX = Math.abs(vx) > vThreshold ? Math.sign(vx) * 2 : 0;
     const extZ = Math.abs(vz) > vThreshold ? Math.sign(vz) * 2 : 0;
@@ -660,27 +685,51 @@ export function updateChunks(scene, camera, frustum, vx = 0, vz = 0) {
     const minZ = cameraChunkZ - RENDER_DISTANCE_HORIZON + Math.min(0, extZ);
     const maxZ = cameraChunkZ + RENDER_DISTANCE_HORIZON + Math.max(0, extZ);
 
-    // Full scan on chunk boundary change: load ALL in-range chunks into buckets
+    // Full scan on chunk boundary or direction change
     if (cameraChunkX !== _lastCamCX || cameraChunkZ !== _lastCamCZ) {
         _lastCamCX = cameraChunkX;
         _lastCamCZ = cameraChunkZ;
 
         const _start = performance.now();
 
+        // Directional LOD ring shifts (chunk units forward along camera direction)
+        const SHIFT_MID = 5;
+        const SHIFT_FAR = 12;
+        const SHIFT_ULTRA = 25;
+
+        const _midCX = cameraChunkX + Math.round(ndx * SHIFT_MID);
+        const _midCZ = cameraChunkZ + Math.round(ndz * SHIFT_MID);
+        const _farCX = cameraChunkX + Math.round(ndx * SHIFT_FAR);
+        const _farCZ = cameraChunkZ + Math.round(ndz * SHIFT_FAR);
+        const _ultraCX = cameraChunkX + Math.round(ndx * SHIFT_ULTRA);
+        const _ultraCZ = cameraChunkZ + Math.round(ndz * SHIFT_ULTRA);
+
         _newActive.clear();
         _toAdd.length = 0;
 
         for (let x = minX; x <= maxX; x++) {
             for (let z = minZ; z <= maxZ; z++) {
+                let lod = "horizon";
                 const dx = Math.abs(x - cameraChunkX);
                 const dz = Math.abs(z - cameraChunkZ);
-                let lod = "horizon";
                 if (RENDER_DISTANCE_NEAR > 0 && dx <= RENDER_DISTANCE_NEAR && dz <= RENDER_DISTANCE_NEAR) lod = "near";
-                else if (dx <= RENDER_DISTANCE_MID && dz <= RENDER_DISTANCE_MID) lod = "mid";
-                else if (dx <= RENDER_DISTANCE_FAR && dz <= RENDER_DISTANCE_FAR) lod = "far";
-                else if (dx <= RENDER_DISTANCE_ULTRA && dz <= RENDER_DISTANCE_ULTRA) lod = "ultra";
+                else {
+                    const _dxMid = Math.abs(x - _midCX);
+                    const _dzMid = Math.abs(z - _midCZ);
+                    if (_dxMid <= RENDER_DISTANCE_MID && _dzMid <= RENDER_DISTANCE_MID) lod = "mid";
+                    else {
+                        const _dxFar = Math.abs(x - _farCX);
+                        const _dzFar = Math.abs(z - _farCZ);
+                        if (_dxFar <= RENDER_DISTANCE_FAR && _dzFar <= RENDER_DISTANCE_FAR) lod = "far";
+                        else {
+                            const _dxUltra = Math.abs(x - _ultraCX);
+                            const _dzUltra = Math.abs(z - _ultraCZ);
+                            if (_dxUltra <= RENDER_DISTANCE_ULTRA && _dzUltra <= RENDER_DISTANCE_ULTRA) lod = "ultra";
+                        }
+                    }
+                }
 
-                const chunkKey = `${x},${z}`;
+                const chunkKey = (x + 32768) | ((z + 32768) << 16);
                 _newActive.add(chunkKey);
 
                 const existing = globalChunks.get(chunkKey);
@@ -720,9 +769,10 @@ export function updateChunks(scene, camera, frustum, vx = 0, vz = 0) {
         }
 
         for (const item of _toAdd) {
-            addChunkToBucket(scene, item.x, item.z, item.lod);
-            globalChunks.set(item.chunkKey, { chunkX: item.x, chunkZ: item.z, lod: item.lod, renderLod: item.lod, hidden: true });
-            _chunksHidden++;
+            if (addChunkToBucket(scene, item.x, item.z, item.lod)) {
+                globalChunks.set(item.chunkKey, { chunkX: item.x, chunkZ: item.z, lod: item.lod, renderLod: item.lod, hidden: true });
+                _chunksHidden++;
+            }
         }
 
         _chunkGenTime = performance.now() - _start;
@@ -742,8 +792,6 @@ export function updateChunks(scene, camera, frustum, vx = 0, vz = 0) {
 
     // Frustum re-evaluation: shows/hides chunks based on camera facing
     // Runs when camera rotates significantly (direction dot < 0.965 ≈ 15°)
-    _camDir.set(0, 0, 0);
-    camera.getWorldDirection(_camDir);
     const dirChanged = _frustumDir === null || _camDir.dot(_frustumDir) < 0.965;
 
     if (dirChanged) {
