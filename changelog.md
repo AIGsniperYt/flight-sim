@@ -9,6 +9,77 @@
 
 ---
 
+## **12/06/2026 — G-force rework: shader desaturation + realistic thresholds + enabled by default**
+
+**What changed:** Complete overhaul of the G-force visual effect. Moved from pure CSS overlay to a hybrid approach — shader desaturation at extreme G, CSS vignette for the medium range, with realistic physiological thresholds.
+
+### 1. Shader desaturation (`main.js`)
+
+Added `gForce` uniform to `CinematicShader`. At high G, the fragment shader pulls colours toward greyscale, simulating grey-out/blackout vision loss.
+
+```glsl
+// New: G-force desaturation in CinematicShader
+uniform float gForce;
+// ...
+float gLum = dot(color.rgb, vec3(0.299, 0.587, 0.114));
+color.rgb = mix(color.rgb, vec3(gLum), gForce);
+```
+
+### 2. CSS vignette — spread out (`main.js`)
+
+Replaced the old 3-stop sharp ring gradient with a wide 5-stop smooth gradient for a more natural peripheral vision loss feel.
+
+```css
+// Before: sharp ring
+radial-gradient(circle at center,
+  transparent 50%,
+  rgba(0,0,0,0.7) 70%,
+  rgba(0,0,0,1.0) 90%
+)
+
+// After: smooth spread
+radial-gradient(circle at center,
+  transparent 30%,
+  rgba(0,0,0,0.15) 50%,
+  rgba(0,0,0,0.4) 70%,
+  rgba(0,0,0,0.7) 85%,
+  rgba(0,0,0,1.0) 100%
+)
+```
+
+### 3. Realistic thresholds (`main.js`)
+
+Shifted up 1G so casual turns don't trigger strong effects — only sustained high-G maneuvers feel it:
+
+| G-force | Before | After |
+|---|---|---|
+| Mild effect starts | 3G | 4G |
+| Tunnel visible | 4G | 5G |
+| Colour drain (desat) | 5.5G | 6.5G |
+| Near blackout | 9G | 10G |
+
+```js
+// Before
+const overG = Math.max(0, absG - 3);
+const severity = Math.min(1, overG / 6);
+const overGDesat = Math.max(0, absG - 5.5);
+
+// After
+const overG = Math.max(0, absG - 4);
+const severity = Math.min(1, overG / 5);
+const overGDesat = Math.max(0, absG - 6.5);
+```
+
+### 4. Default ON (`main.js`)
+
+```js
+let gForceEffectEnabled = true;  // was false
+```
+
+Toggle still works via **G** key.
+
+---
+
 ## **12/06/2026 — Memory & optimisation: disappearing chunks fix, directional LOD rings, GC reduction**
 
 **What changed:** Four fixes targeting memory leaks, GC thrashing, and terrain quality — bugfix for migration-originated ghost chunks, directional LOD ring shifting, numeric chunk keys, static trail buffers, and projectile cleanup on respawn.
