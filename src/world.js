@@ -254,6 +254,7 @@ const precomputedIndices = {};
 let initialized = false;
 let _lastCamCX = null, _lastCamCZ = null;
 let _lastScanDir = null;
+let _lastFullScanCX = null, _lastFullScanCZ = null;
 const _newActive = new Set();
 const _toAdd = [];
 const _toRemove = [];
@@ -675,11 +676,10 @@ function unhideChunkInBucket(chunkX, chunkZ, lod) {
 
 function migrateChunkLod(scene, chunkX, chunkZ, oldLod, newLod, wasHidden) {
     const targetBucket = mergedMeshes[newLod];
-    if (targetBucket.freeSlots.length === 0) {
+    if (!addChunkToBucket(scene, chunkX, chunkZ, newLod)) {
         return false;
     }
     removeChunkFromBucket(chunkX, chunkZ, oldLod, wasHidden, true);
-    addChunkToBucket(scene, chunkX, chunkZ, newLod);
     if (!wasHidden) {
         unhideChunkInBucket(chunkX, chunkZ, newLod);
     }
@@ -865,8 +865,30 @@ export function updateChunks(scene, camera, frustum, vx = 0, vz = 0) {
         _chunksRemoved = _toRemove.length;
 
         _frustumDir = null;
+        _lastFullScanCX = cameraChunkX;
+        _lastFullScanCZ = cameraChunkZ;
+    } else if (_lastFullScanCX !== undefined) {
+        // Distance-based scan trigger: force scan when camera moves >3 chunks
+        // between boundary crossings — catches cumulative drift from directional LOD rings
+        const _scanDist = Math.abs(cameraChunkX - _lastFullScanCX) + Math.abs(cameraChunkZ - _lastFullScanCZ);
+        if (_scanDist > 3) {
+            _lastCamCX = null;
+        }
     }
 
+    // Per-frame stale chunk removal: chunks that drifted beyond horizon range
+    // between boundary crossings are removed immediately (freeing bucket slots
+    // for stuck migrations). Uses a generous margin to avoid thrashing at the edge.
+    const _CLEANUP_MARGIN = 5;
+    globalChunks.forEach((entry, key) => {
+        const dx = Math.abs(entry.chunkX - cameraChunkX);
+        const dz = Math.abs(entry.chunkZ - cameraChunkZ);
+        if (dx > RENDER_DISTANCE_HORIZON + _CLEANUP_MARGIN || dz > RENDER_DISTANCE_HORIZON + _CLEANUP_MARGIN) {
+            _migrateQueue.delete(key);
+            removeChunkFromBucket(entry.chunkX, entry.chunkZ, entry.renderLod ?? entry.lod, entry.hidden);
+            globalChunks.delete(key);
+        }
+    });
     const migStart = performance.now();
     const pending = _migrateQueue.size;
     const migBudget = pending > 0

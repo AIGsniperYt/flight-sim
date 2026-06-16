@@ -9,6 +9,58 @@
 
 ---
 
+## **16/06/2026 — Chunk leak fix: per-frame stale cleanup, safer migration, distance scan trigger**
+
+**What changed:** Three fixes for chunks persisting at wrong LOD or never being removed.
+
+### 1. Safer slot acquisition in `migrateChunkLod` (`src/world.js`)
+
+Old code checked capacity, removed from old bucket, then added to new — if the add failed despite the check, the chunk was orphaned (in no bucket but still in `globalChunks`).
+
+```js
+// before: remove then add — orphaning risk on failure
+if (targetBucket.freeSlots.length === 0) return false;
+removeChunkFromBucket(chunkX, chunkZ, oldLod, wasHidden, true);
+addChunkToBucket(scene, chunkX, chunkZ, newLod);
+
+// after: add first, release on success only
+if (!addChunkToBucket(scene, chunkX, chunkZ, newLod)) return false;
+removeChunkFromBucket(chunkX, chunkZ, oldLod, wasHidden, true);
+```
+
+### 2. Per-frame stale chunk removal (`src/world.js`)
+
+The full scan (which removes out-of-range chunks) only ran on chunk boundary crossing or >15° direction change. Between these events, chunks that had left the horizon range stayed in `globalChunks` and their buckets — consuming slots and rendering at wrong LOD when the camera looked back.
+
+A distance-based sweep now runs every frame with a 5-chunk margin beyond `RENDER_DISTANCE_HORIZON`. Chunks outside this bound are removed immediately, freeing bucket slots and unblocking stuck migration chains.
+
+```js
+// Added after scan block, before migration processing:
+const _CLEANUP_MARGIN = 5;
+globalChunks.forEach((entry, key) => {
+    const dx = Math.abs(entry.chunkX - cameraChunkX);
+    const dz = Math.abs(entry.chunkZ - cameraChunkZ);
+    if (dx > RENDER_DISTANCE_HORIZON + _CLEANUP_MARGIN || dz > RENDER_DISTANCE_HORIZON + _CLEANUP_MARGIN) {
+        _migrateQueue.delete(key);
+        removeChunkFromBucket(entry.chunkX, entry.chunkZ, entry.renderLod ?? entry.lod, entry.hidden);
+        globalChunks.delete(key);
+    }
+});
+```
+
+### 3. Distance-based scan trigger (`src/world.js`)
+
+When the camera moves >3 chunks without crossing a boundary (e.g. slow heading change, or hovering at a chunk edge), directional LOD rings drift out of sync. A new `_lastFullScanCX`/`_lastFullScanCZ` tracker forces a full scan by setting `_lastCamCX = null` when the cumulative manhattan distance exceeds 3 chunks.
+
+```js
+// Added after scan block:
+if (_scanDist > 3) _lastCamCX = null;  // forces full scan next frame
+```
+
+Combined effect: stale chunks are removed within 1 frame of leaving range, bucket slots drain promptly, and migration backlogs clear faster. No more chunks stuck at ultra behind the camera.
+
+---
+
 ## **16/06/2026 — GPU noise reduction by LOD + speed feel terrain frequency bump**
 
 **What changed:** Two changes — far/ultra/horizon vertex shaders use reduced-noise `computeHeight` variants (~36–73% fewer snoise calls), and terrain frequency parameters doubled everywhere for tighter features at cruise speed.
