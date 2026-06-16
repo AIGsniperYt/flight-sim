@@ -138,6 +138,8 @@ const debugArrowOrigin = new THREE.Vector3();
 
 let debugVectorArrowsVisible = false;
 let _physicsTime = 0;
+let _cachedTerrainPos = null;
+let _cachedTerrainHeight = 0;
 let _collisionsEnabled = true;
 let _crashed = false;
 let _crashPos = new THREE.Vector3();
@@ -593,7 +595,14 @@ export function updatePlane(dt) {
 
     if (!_crashed) {
         const impactSpeed = velocity.length();
-        const terrainY = getHeightScaled(plane.position.x, plane.position.z, 1.0);
+        const px = plane.position.x, pz = plane.position.z;
+        let terrainY;
+        if (_cachedTerrainPos && Math.abs(_cachedTerrainPos.x - px) < 5 && Math.abs(_cachedTerrainPos.z - pz) < 5) {
+            terrainY = _cachedTerrainHeight;
+        } else {
+            _cachedTerrainPos = { x: px, z: pz };
+            terrainY = _cachedTerrainHeight = getHeightScaled(px, pz, 1.0);
+        }
         if (plane.position.y < terrainY) {
             if (_collisionsEnabled) {
                 const craftPitch = Math.asin(THREE.MathUtils.clamp(forward.y, -1, 1));

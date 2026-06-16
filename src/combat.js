@@ -80,22 +80,19 @@ function spawnExplosion(pos, speed) {
     const count = EXPLOSION_PARTICLES;
     const positions = new Float32Array(count * 3);
     const colors = new Float32Array(count * 3);
-    const velocities = [];
     const spread = 20 + speed * 0.3;
+    const velArray = new Float32Array(count * 3);
     for (let i = 0; i < count; i++) {
         const i3 = i * 3;
         positions[i3] = pos.x + (Math.random() - 0.5) * 4;
         positions[i3 + 1] = pos.y + (Math.random() - 0.5) * 4;
         positions[i3 + 2] = pos.z + (Math.random() - 0.5) * 4;
-        const b = 0.5 + Math.random() * 0.5;
         colors[i3] = 1;
         colors[i3 + 1] = 0.4 + Math.random() * 0.3;
         colors[i3 + 2] = 0;
-        velocities.push(new THREE.Vector3(
-            (Math.random() - 0.5) * spread,
-            Math.random() * spread * 0.8,
-            (Math.random() - 0.5) * spread
-        ));
+        velArray[i3] = (Math.random() - 0.5) * spread;
+        velArray[i3 + 1] = Math.random() * spread * 0.8;
+        velArray[i3 + 2] = (Math.random() - 0.5) * spread;
     }
     const geom = new THREE.BufferGeometry();
     geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
@@ -109,7 +106,7 @@ function spawnExplosion(pos, speed) {
         depthWrite: false
     });
     const mesh = new THREE.Points(geom, mat);
-    mesh.userData.velocities = velocities;
+    mesh.userData.velArray = velArray;
     mesh.userData.start = performance.now();
     _group.add(mesh);
     _explosions.push(mesh);
@@ -117,8 +114,8 @@ function spawnExplosion(pos, speed) {
     const smokeCount = SMOKE_PARTICLES;
     const smokePos = new Float32Array(smokeCount * 3);
     const smokeCol = new Float32Array(smokeCount * 3);
-    const smokeVel = [];
     const smokeSpread = 10 + speed * 0.2;
+    const smokeVel = new Float32Array(smokeCount * 3);
     for (let i = 0; i < smokeCount; i++) {
         const i3 = i * 3;
         smokePos[i3] = pos.x + (Math.random() - 0.5) * 6;
@@ -128,11 +125,9 @@ function spawnExplosion(pos, speed) {
         smokeCol[i3] = gray;
         smokeCol[i3 + 1] = gray;
         smokeCol[i3 + 2] = gray;
-        smokeVel.push(new THREE.Vector3(
-            (Math.random() - 0.5) * smokeSpread * 0.5,
-            Math.random() * smokeSpread * 0.6 + 5,
-            (Math.random() - 0.5) * smokeSpread * 0.5
-        ));
+        smokeVel[i3] = (Math.random() - 0.5) * smokeSpread * 0.5;
+        smokeVel[i3 + 1] = Math.random() * smokeSpread * 0.6 + 5;
+        smokeVel[i3 + 2] = (Math.random() - 0.5) * smokeSpread * 0.5;
     }
     const smokeGeom = new THREE.BufferGeometry();
     smokeGeom.setAttribute('position', new THREE.BufferAttribute(smokePos, 3));
@@ -146,7 +141,7 @@ function spawnExplosion(pos, speed) {
         depthWrite: false
     });
     const smokeMesh = new THREE.Points(smokeGeom, smokeMat);
-    smokeMesh.userData.velocities = smokeVel;
+    smokeMesh.userData.velArray = smokeVel;
     smokeMesh.userData.start = performance.now();
     smokeMesh.userData.isSmoke = true;
     _group.add(smokeMesh);
@@ -157,21 +152,19 @@ function spawnHitParticles(pos) {
     const count = 30;
     const positions = new Float32Array(count * 3);
     const colors = new Float32Array(count * 3);
-    const velocities = [];
     const spread = 8;
+    const velArray = new Float32Array(count * 3);
     for (let i = 0; i < count; i++) {
         const i3 = i * 3;
         positions[i3] = pos.x + (Math.random() - 0.5) * 2;
         positions[i3 + 1] = pos.y + (Math.random() - 0.5) * 2;
         positions[i3 + 2] = pos.z + (Math.random() - 0.5) * 2;
         colors[i3] = 1;
-        colors[i3 + 1] = 0.8 + Math.random() * 0.2;
+        colors[i3 + 1] = 0.8 + Math.random() * 0.3;
         colors[i3 + 2] = 0.2;
-        velocities.push(new THREE.Vector3(
-            (Math.random() - 0.5) * spread,
-            Math.random() * spread * 0.5,
-            (Math.random() - 0.5) * spread
-        ));
+        velArray[i3] = (Math.random() - 0.5) * spread;
+        velArray[i3 + 1] = Math.random() * spread * 0.5;
+        velArray[i3 + 2] = (Math.random() - 0.5) * spread;
     }
     const geom = new THREE.BufferGeometry();
     geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
@@ -185,7 +178,7 @@ function spawnHitParticles(pos) {
         depthWrite: false
     });
     const mesh = new THREE.Points(geom, mat);
-    mesh.userData.velocities = velocities;
+    mesh.userData.velArray = velArray;
     mesh.userData.start = performance.now();
     mesh.userData.hitParticles = true;
     _group.add(mesh);
@@ -355,7 +348,7 @@ export function spawnEnemy(position, heading) {
     _group.add(trailLine);
 
     _enemies.push({
-        mesh, trail: { line: trailLine, pos: trailPos, count: 0, head: 0 },
+        mesh, trail: { line: trailLine, count: 0 },
         heading, speed: 150 + Math.random() * 80, id: _nextEnemyId++,
         hp: ENEMY_MAX_HP,
         lockTimer: 0,
@@ -649,29 +642,19 @@ export function update(dt, playerPos, playerQuat) {
             }
         }
 
-        // Update trail (ring buffer)
+        // Update trail (shift array)
         const tr = e.trail;
-        tr.head = (tr.head + 1) % _enemyTrailLen;
-        const i3 = tr.head * 3;
-        tr.pos[i3] = e.mesh.position.x;
-        tr.pos[i3 + 1] = e.mesh.position.y;
-        tr.pos[i3 + 2] = e.mesh.position.z;
-        if (tr.count < _enemyTrailLen) tr.count++;
-        tr.line.geometry.attributes.position.needsUpdate = true;
-
-        const arr = tr.pos;
-        const count = tr.count;
-        if (count >= 2) {
-            const drawArr = tr.line.geometry.attributes.position.array;
-            for (let j = 0; j < count; j++) {
-                const srcIdx = ((tr.head - j) % _enemyTrailLen + _enemyTrailLen) % _enemyTrailLen;
-                drawArr[j * 3] = arr[srcIdx * 3];
-                drawArr[j * 3 + 1] = arr[srcIdx * 3 + 1];
-                drawArr[j * 3 + 2] = arr[srcIdx * 3 + 2];
-            }
-            tr.line.geometry.setDrawRange(0, count);
-            tr.line.geometry.attributes.position.needsUpdate = true;
+        const arr = tr.line.geometry.attributes.position.array;
+        for (let j = 0; j < (_enemyTrailLen - 1) * 3; j++) {
+            arr[j] = arr[j + 3];
         }
+        const tail = (_enemyTrailLen - 1) * 3;
+        arr[tail] = e.mesh.position.x;
+        arr[tail + 1] = e.mesh.position.y;
+        arr[tail + 2] = e.mesh.position.z;
+        if (tr.count < _enemyTrailLen) tr.count++;
+        tr.line.geometry.setDrawRange(0, tr.count);
+        tr.line.geometry.attributes.position.needsUpdate = true;
 
         // Player lock timer accumulation
         if (_playerLockTargetId === e.id) {
@@ -711,12 +694,14 @@ export function update(dt, playerPos, playerQuat) {
         }
         const progress = elapsed / duration;
         const pos = e.geometry.attributes.position;
-        const vel = e.userData.velocities;
+        const velArray = e.userData.velArray;
+        const dt2 = 1 / 60;
+        const gravity = isSmoke ? 1 : 5;
         for (let j = 0; j < pos.count; j++) {
-            const dt2 = 1 / 60;
-            pos.array[j * 3] += vel[j].x * dt2;
-            pos.array[j * 3 + 1] += vel[j].y * dt2 - (isSmoke ? 1 : 5) * dt2;
-            pos.array[j * 3 + 2] += vel[j].z * dt2;
+            const j3 = j * 3;
+            pos.array[j3] += velArray[j3] * dt2;
+            pos.array[j3 + 1] += velArray[j3 + 1] * dt2 - gravity * dt2;
+            pos.array[j3 + 2] += velArray[j3 + 2] * dt2;
         }
         pos.needsUpdate = true;
 

@@ -2,9 +2,9 @@ const TILE_SIZE = 50;
 const MAX_TILES = 4000;
 
 const heightScale = 20;
-const baseScale = 0.02;
+const baseScale = 0.04;
 const mountainScale = 0.003;
-const hillScale = 0.04;
+const hillScale = 0.08;
 const flatnessFactor = 0.2;
 const mountainHeightMultiplier = 4.0;
 const hillHeightMultiplier = 0.1;
@@ -122,7 +122,7 @@ function generateTile(tileX, tileZ) {
             const wwz = wz + warpZ;
             
             const elevationSmooth = Math.min(1.0, profile / 40.0);
-            const lowlandSmooth = 0.02 + 0.98 * elevationSmooth;
+            const lowlandSmooth = 0.04 + 0.96 * elevationSmooth;
             const base = snoise2D(wwx * baseScale, wwz * baseScale) * heightScale * flatnessFactor * lowlandSmooth;
             const hill = snoise2D(wwx * hillScale, wwz * hillScale) * heightScale * hillHeightMultiplier * lowlandSmooth;
 
@@ -151,7 +151,7 @@ function generateTile(tileX, tileZ) {
             const mountainDetail = rockyDetail * smoothstep(10.0, 200.0, mountainBase) + peakJaggedness * peakMask;
             const mountain = mountainBase + mountainDetail;
 
-            const rollingHill = snoise2D(wwx * 0.003, wwz * 0.003) * 8.0 * (1.0 - elevationSmooth);
+            const rollingHill = snoise2D(wwx * 0.006, wwz * 0.006) * 8.0 * (1.0 - elevationSmooth);
             const preDetail = profile + base + hill + mountain + rollingHill;
             const elevationFactor = Math.max(0, Math.min(1, preDetail / (heightScale * 6.0)));
             const detail = snoise2D(wwx * 0.3, wwz * 0.3) * 1.0 * elevationFactor;

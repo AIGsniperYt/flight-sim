@@ -9,6 +9,152 @@
 
 ---
 
+## **16/06/2026 — GPU noise reduction by LOD + speed feel terrain frequency bump**
+
+**What changed:** Two changes — far/ultra/horizon vertex shaders use reduced-noise `computeHeight` variants (~36–73% fewer snoise calls), and terrain frequency parameters doubled everywhere for tighter features at cruise speed.
+
+### 1. GPU noise reduction per LOD (`src/world.js`)
+
+Three `computeHeight` GLSL variants injected into all materials. Each LOD calls only its assigned variant — unused code compiles but never executes:
+
+| LOD | Function | Octaves removed |
+|-----|----------|-----------------|
+| near/mid | `computeHeight` (full) | none |
+| far/ultra | `computeHeightReduced` | n3, n4, r2, r3, detail, dune 2°+3°, tundra 2° |
+| horizon | `computeHeightMinimal` | all detail octaves: n1–n4, r1–r3, rollingHill, detail, all dune, all tundra |
+
+```js
+// before: one computeHeight for all LODs
+float h = computeHeight(transformed.x, transformed.z, ...);
+
+// after: LOD-aware dispatch in onBeforeCompile
+const heightFunc = lod === 'horizon' ? 'computeHeightMinimal'
+    : (lod === 'far' || lod === 'ultra' ? 'computeHeightReduced'
+    : 'computeHeight');
+float h = ${heightFunc}(transformed.x, transformed.z, ...);
+```
+
+### 2. Speed feel — terrain frequency doubled (`src/world.js`, `src/terrain.js`, `src/terrain-worker.js`)
+
+F-16 cruises ~210 m/s; rollingHill period of 333 units produced one feature per 1.6s — too slow for speed feel. All terrain scales and frequencies doubled:
+
+| Parameter | Before | After | Effect |
+|-----------|--------|-------|--------|
+| `baseScale` | 0.02 | **0.04** | Base noise features 2× more frequent |
+| `hillScale` | 0.04 | **0.08** | Hill features 2× more frequent |
+| rollingHill freq | 0.003 | **0.006** | Rolling hills period 670→335 units |
+| lowlandSmooth min | 0.02 | **0.04** | Lowlands less flat (±0.08→±0.16m) |
+
+```js
+// before (all three files)
+const baseScale = 0.02;
+const hillScale = 0.04;
+const lowlandSmooth = 0.02 + 0.98 * elevationSmooth;
+const rollingHill = snoise2D(wwx * 0.003, wwz * 0.003) * 8.0 * (1.0 - elevationSmooth);
+
+// after
+const baseScale = 0.04;
+const hillScale = 0.08;
+const lowlandSmooth = 0.04 + 0.96 * elevationSmooth;
+const rollingHill = snoise2D(wwx * 0.006, wwz * 0.006) * 8.0 * (1.0 - elevationSmooth);
+```
+
+All three files updated in sync — GPU shader uniforms, CPU `terrain.js`, and `terrain-worker.js` — so collision detection stays consistent with rendered terrain.
+
+---
+
+## **16/06/2026 — Four zero-overhead optimisations: physics cache, migration skip, flat particle arrays, shift trails**
+
+**What changed:** Four CPU-level optimisations that reduce frame time without any visual quality change.
+
+### 1. Terrain height cache (`src/physics.js`)
+
+`getHeightScaled()` was called every physics frame for collision detection, triggering tile cache lookups (and occasional tile generation on miss). The result barely changes between frames — cached with a 5m position tolerance.
+
+```js
+// before: unconditional call through the tile cache every frame
+const terrainY = getHeightScaled(plane.position.x, plane.position.z, 1.0);
+
+// after: skip if near last sampled position
+if (_cachedTerrainPos && Math.abs(_cachedTerrainPos.x - px) < 5 && Math.abs(_cachedTerrainPos.z - pz) < 5) {
+    terrainY = _cachedTerrainHeight;
+} else {
+    _cachedTerrainPos = { x: px, z: pz };
+    terrainY = _cachedTerrainHeight = getHeightScaled(px, pz, 1.0);
+}
+```
+
+### 2. Skip vertex buffer zero-fill on LOD migration (`src/world.js`)
+
+`migrateChunkLod` called `removeChunkFromBucket` which zeroed every vertex in the old slot (`pos[i3+1] = -99999`) before the slot was returned to the free pool. When the same slot is later allocated by `addChunkToBucket`, the data is immediately overwritten — the zero-fill was wasted work.
+
+```js
+// before: always zeros 2500+ verts on removal
+function removeChunkFromBucket(chunkX, chunkZ, lod, skipVisDec) {
+    // ... loops over every vertex writing 0, -99999, 0 ...
+}
+
+// after: skipClear flag skips the loop
+function removeChunkFromBucket(chunkX, chunkZ, lod, skipVisDec, skipClear) {
+    if (!skipClear) {
+        // ... loop only runs on non-migration removals ...
+    }
+}
+migrateChunkLod → removeChunkFromBucket(..., true);  // skipClear=true
+```
+
+### 3. Flat Float32Array particle velocities (`src/combat.js`)
+
+Explosion/spawn particle velocities were stored as an array of `THREE.Vector3` objects. The per-frame update loop accessed `vel[j].x`, `vel[j].y`, `vel[j].z` — three property lookups per particle. Also `dt2 = 1/60` was recomputed inside the loop body.
+
+```js
+// before: Vector3 objects + dt2 inside loop
+const velocities = [];
+velocities.push(new THREE.Vector3(vx, vy, vz));
+// ...
+for (let j = 0; j < count; j++) {
+    const dt2 = 1 / 60;
+    pos.array[j*3]   += vel[j].x * dt2;
+    pos.array[j*3+1] += vel[j].y * dt2 - gravity * dt2;
+    pos.array[j*3+2] += vel[j].z * dt2;
+}
+
+// after: flat Float32Array + dt2 hoisted
+const velArray = new Float32Array(count * 3);
+velArray[i3] = vx; velArray[i3+1] = vy; velArray[i3+2] = vz;
+// ...
+const dt2 = 1 / 60;
+for (let j = 0; j < count; j++) {
+    const j3 = j * 3;
+    pos.array[j3]   += velArray[j3]   * dt2;
+    pos.array[j3+1] += velArray[j3+1] * dt2 - gravity * dt2;
+    pos.array[j3+2] += velArray[j3+2] * dt2;
+}
+```
+
+### 4. Enemy trail: ring buffer → shift array (`src/combat.js`)
+
+Each enemy trail used a separate ring buffer (`tr.pos`, `tr.head`) that was copied element-by-element to the geometry draw array every frame — two buffers, `O(2n)` float copies. Replaced with a single shifting array that writes directly to the geometry attribute.
+
+```js
+// before: ring buffer + separate copy loop
+tr.head = (tr.head + 1) % _enemyTrailLen;
+tr.pos[tr.head*3] = x; tr.pos[tr.head*3+1] = y; tr.pos[tr.head*3+2] = z;
+for (let j = 0; j < count; j++) {
+    const srcIdx = ((tr.head - j) % _enemyTrailLen + _enemyTrailLen) % _enemyTrailLen;
+    drawArr[j*3] = tr.pos[srcIdx*3];
+    drawArr[j*3+1] = tr.pos[srcIdx*3+1];
+    drawArr[j*3+2] = tr.pos[srcIdx*3+2];
+}
+
+// after: single shift + append direct to geometry array
+for (let j = 0; j < (_enemyTrailLen - 1) * 3; j++) arr[j] = arr[j + 3];
+const tail = (_enemyTrailLen - 1) * 3;
+arr[tail] = x; arr[tail+1] = y; arr[tail+2] = z;
+```
+
+---
+
 ## **12/06/2026 — G-force rework: shader desaturation + realistic thresholds + enabled by default**
 
 **What changed:** Complete overhaul of the G-force visual effect. Moved from pure CSS overlay to a hybrid approach — shader desaturation at extreme G, CSS vignette for the medium range, with realistic physiological thresholds.

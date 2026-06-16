@@ -76,7 +76,7 @@ float computeHeight(float wx, float wz, float baseScale, float hillScale, float 
     vec2 warpPos = pos + vec2(warpX, warpZ);
     
     float elevationSmooth = min(1.0, profile / 40.0);
-    float lowlandSmooth = 0.02 + 0.98 * elevationSmooth;
+    float lowlandSmooth = 0.04 + 0.96 * elevationSmooth;
     float base = snoise(warpPos * baseScale) * heightScale * flatnessFactor * lowlandSmooth;
     float hill = snoise(warpPos * hillScale) * heightScale * hillHeightMultiplier * lowlandSmooth;
 
@@ -113,7 +113,7 @@ float computeHeight(float wx, float wz, float baseScale, float hillScale, float 
     float mountainDetail = rockyDetail * smoothstep(10.0, 200.0, mountainBase) + peakJaggedness * peakMask;
     float mountain = mountainBase + mountainDetail;
 
-    float rollingHill = snoise(warpPos * 0.003) * 8.0 * (1.0 - elevationSmooth);
+    float rollingHill = snoise(warpPos * 0.006) * 8.0 * (1.0 - elevationSmooth);
     float preDetail = profile + base + hill + mountain + rollingHill;
     float elevationFactor = clamp(preDetail / (heightScale * 6.0), 0.0, 1.0);
     float detail = snoise(warpPos * 0.3) * 1.0 * elevationFactor;
@@ -133,6 +133,88 @@ float computeHeight(float wx, float wz, float baseScale, float hillScale, float 
 
     float biomeHeight = duneNoise * desertMix + tundraNoise * tundraMix;
     return preDetail + detail + biomeHeight;
+}
+
+float computeHeightReduced(float wx, float wz, float baseScale, float hillScale, float mountainScale, float heightScale, float flatnessFactor, float hillHeightMultiplier, float mountainHeightMultiplier, float continentScale, float warpScale, float ridgeScale) {
+    vec2 pos = vec2(wx, wz);
+    float pf = snoise(pos * 0.0003);
+    float profile = 0.0;
+    float t;
+    t = sigmoidStep(-0.7, -0.4, pf);  profile = mix(0.0, 80.0, t);
+    t = sigmoidStep(-0.1, 0.1, pf);   profile = mix(profile, 200.0, t);
+    t = sigmoidStep(0.35, 0.5, pf);   profile = mix(profile, 400.0, t);
+    t = sigmoidStep(0.64, 0.71, pf);  profile = mix(profile, 600.0, t);
+
+    float warpX = snoise(pos * warpScale) * 100.0;
+    float warpZ = snoise(pos * warpScale + vec2(5.2, 1.3)) * 100.0;
+    vec2 warpPos = pos + vec2(warpX, warpZ);
+
+    float elevationSmooth = min(1.0, profile / 40.0);
+    float lowlandSmooth = 0.04 + 0.96 * elevationSmooth;
+    float base = snoise(warpPos * baseScale) * heightScale * flatnessFactor * lowlandSmooth;
+    float hill = snoise(warpPos * hillScale) * heightScale * hillHeightMultiplier * lowlandSmooth;
+
+    float mountainRegion = snoise(pos * 0.0005);
+    float continentCheck = snoise(pos * continentScale) * heightScale * 2.0;
+    float mountainMask = smoothstep(-0.2, 0.3, mountainRegion) * smoothstep(50.0, 200.0, profile);
+
+    float biomeField = snoise(pos * 0.0001);
+    float desertMix = (1.0 - smoothstep(60.0, 150.0, profile)) * (1.0 - smoothstep(-0.2, 0.1, biomeField)) * smoothstep(10.0, 30.0, profile);
+    mountainMask *= (1.0 - desertMix * 0.8);
+
+    float rawMountain = max(0.0, snoise(warpPos * 0.0003));
+    float mountainBase = rawMountain * rawMountain * 800.0 * mountainMask;
+
+    float n1 = snoise(warpPos * 0.001) * 150.0;
+    float n2 = snoise(warpPos * 0.003) * 50.0;
+    float rockyDetail = n1 + n2;
+
+    float r1 = ridgedNoise(warpPos * 0.002) * 150.0;
+    float peakJaggedness = r1;
+    float peakMask = smoothstep(150.0, 500.0, mountainBase);
+
+    float mountainDetail = rockyDetail * smoothstep(10.0, 200.0, mountainBase) + peakJaggedness * peakMask;
+    float mountain = mountainBase + mountainDetail;
+
+    float rollingHill = snoise(warpPos * 0.006) * 8.0 * (1.0 - elevationSmooth);
+    float preDetail = profile + base + hill + mountain + rollingHill;
+    float elevationFactor = clamp(preDetail / (heightScale * 6.0), 0.0, 1.0);
+
+    float duneNoise = snoise(warpPos * 0.003) * 20.0;
+    float tundraMix = smoothstep(300.0, 500.0, profile);
+    float tundraNoise = ridgedNoise(warpPos * 0.005) * 40.0;
+
+    float biomeHeight = duneNoise * desertMix + tundraNoise * tundraMix;
+    return preDetail + biomeHeight;
+}
+
+float computeHeightMinimal(float wx, float wz, float baseScale, float hillScale, float mountainScale, float heightScale, float flatnessFactor, float hillHeightMultiplier, float mountainHeightMultiplier, float continentScale, float warpScale, float ridgeScale) {
+    vec2 pos = vec2(wx, wz);
+    float pf = snoise(pos * 0.0003);
+    float profile = 0.0;
+    float t;
+    t = sigmoidStep(-0.7, -0.4, pf);  profile = mix(0.0, 80.0, t);
+    t = sigmoidStep(-0.1, 0.1, pf);   profile = mix(profile, 200.0, t);
+    t = sigmoidStep(0.35, 0.5, pf);   profile = mix(profile, 400.0, t);
+    t = sigmoidStep(0.64, 0.71, pf);  profile = mix(profile, 600.0, t);
+
+    float warpX = snoise(pos * warpScale) * 100.0;
+    float warpZ = snoise(pos * warpScale + vec2(5.2, 1.3)) * 100.0;
+    vec2 warpPos = pos + vec2(warpX, warpZ);
+
+    float elevationSmooth = min(1.0, profile / 40.0);
+    float lowlandSmooth = 0.04 + 0.96 * elevationSmooth;
+    float base = snoise(warpPos * baseScale) * heightScale * flatnessFactor * lowlandSmooth;
+    float hill = snoise(warpPos * hillScale) * heightScale * hillHeightMultiplier * lowlandSmooth;
+
+    float mountainRegion = snoise(pos * 0.0005);
+    float mountainMask = smoothstep(-0.2, 0.3, mountainRegion) * smoothstep(50.0, 200.0, profile);
+
+    float rawMountain = max(0.0, snoise(warpPos * 0.0003));
+    float mountainBase = rawMountain * rawMountain * 800.0 * mountainMask;
+    float mountain = mountainBase;
+
+    return profile + base + hill + mountain;
 }
 `;
 
@@ -314,8 +396,9 @@ function initMeshes(scene) {
         _terrainMaterials.push(material);
 
         material.onBeforeCompile = (shader) => {
-            shader.uniforms.baseScale = { value: 0.02 };
-            shader.uniforms.hillScale = { value: 0.04 };
+            const heightFunc = lod === 'horizon' ? 'computeHeightMinimal' : (lod === 'far' || lod === 'ultra' ? 'computeHeightReduced' : 'computeHeight');
+            shader.uniforms.baseScale = { value: 0.04 };
+            shader.uniforms.hillScale = { value: 0.08 };
             shader.uniforms.mountainScale = { value: 0.003 };
             shader.uniforms.heightScale = { value: 20.0 };
             shader.uniforms.flatnessFactor = { value: 0.2 };
@@ -371,7 +454,7 @@ function initMeshes(scene) {
                 '#include <begin_vertex>',
                 `
                 vec3 transformed = vec3( position );
-                float h = computeHeight(transformed.x, transformed.z, baseScale, hillScale, mountainScale, heightScale, flatnessFactor, hillHeightMultiplier, mountainHeightMultiplier, continentScale, warpScale, ridgeScale);
+                float h = ${heightFunc}(transformed.x, transformed.z, baseScale, hillScale, mountainScale, heightScale, flatnessFactor, hillHeightMultiplier, mountainHeightMultiplier, continentScale, warpScale, ridgeScale);
                 float craterH = craterDeform(transformed.xz);
                 h += craterH;
                 transformed.y = h;
@@ -525,7 +608,7 @@ function addChunkToBucket(scene, chunkX, chunkZ, lod) {
     return true;
 }
 
-function removeChunkFromBucket(chunkX, chunkZ, lod, skipVisDec = false) {
+function removeChunkFromBucket(chunkX, chunkZ, lod, skipVisDec = false, skipClear = false) {
     const bucket = mergedMeshes[lod];
     const chunkKey = (chunkX + 32768) | ((chunkZ + 32768) << 16);
     const chunkData = bucket.activeChunks.get(chunkKey);
@@ -534,13 +617,15 @@ function removeChunkFromBucket(chunkX, chunkZ, lod, skipVisDec = false) {
 
     const pos = bucket.geometry.attributes.position.array;
     const slot = chunkData.slot;
-    let idx = slot * bucket.vertsPerChunk;
 
-    for (let i = 0; i < bucket.vertsPerChunk; i++) {
-        pos[idx * 3] = 0;
-        pos[idx * 3 + 1] = -99999;
-        pos[idx * 3 + 2] = 0;
-        idx++;
+    if (!skipClear) {
+        let idx = slot * bucket.vertsPerChunk;
+        for (let i = 0; i < bucket.vertsPerChunk; i++) {
+            pos[idx * 3] = 0;
+            pos[idx * 3 + 1] = -99999;
+            pos[idx * 3 + 2] = 0;
+            idx++;
+        }
     }
 
     bucket.dirty = true;
@@ -593,7 +678,7 @@ function migrateChunkLod(scene, chunkX, chunkZ, oldLod, newLod, wasHidden) {
     if (targetBucket.freeSlots.length === 0) {
         return false;
     }
-    removeChunkFromBucket(chunkX, chunkZ, oldLod, wasHidden);
+    removeChunkFromBucket(chunkX, chunkZ, oldLod, wasHidden, true);
     addChunkToBucket(scene, chunkX, chunkZ, newLod);
     if (!wasHidden) {
         unhideChunkInBucket(chunkX, chunkZ, newLod);
