@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { clearCache as clearTerrainCache } from './terrain.js';
+import { clearCache as clearTerrainCache, getHeightScaled } from './terrain.js';
 
 const simplexNoiseGLSL = `
 // GLSL textureless classic 2D noise "cnoise",
@@ -247,9 +247,27 @@ const FRUSTUM_MARGIN = CHUNK_SIZE;
 const MIGRATIONS_PER_FRAME = 50;
 const LOD_RANK = { near: 0, mid: 1, far: 2, ultra: 3, horizon: 4 };
 
+// Spatial grid for frustum culling: bins chunks into 8x8 cells for O(1) lookup
+const GRID_SIZE = 8;
+const GRID_SCALE = 256; // 8 chunks per cell (256 units per cell for CHUNK_SIZE=50)
+let _spatialGrid = null; // Map of "cellX,cellZ" -> Set of chunkKeys
+let _gridDirty = true;
+
+// Camera tracking for early-exit frustum checks
+let _lastFrustumCamX = null, _lastFrustumCamZ = null;
+let _lastFrustumCamDir = new THREE.Vector3();
+const FRUSTUM_POSITION_THRESHOLD = 50; // Only re-eval if camera moves >50 units
+const FRUSTUM_DIRECTION_THRESHOLD = 0.93; // Dot product threshold (~21 degrees)
+
+// Collision broad-phase grid: min/max heights per 100m cell
+let _collisionHeightGrid = null; // Map of "cellX,cellZ" -> { minY, maxY }
+const COLLISION_GRID_SCALE = 100; // 100m per cell
+
 const mergedMeshes = { near: {}, mid: {}, far: {}, ultra: {}, horizon: {} };
 const globalChunks = new Map();
 const _migrateQueue = new Map();
+const _migrationVersions = new Map(); // Tracks chunk versions for stale cleanup
+let _chunkVersionCounter = 0; // Incremented when chunk is removed/re-added
 const precomputedIndices = {};
 let initialized = false;
 let _lastCamCX = null, _lastCamCZ = null;
@@ -276,6 +294,70 @@ const _frustumBBox = new THREE.Box3();
 let _frustumDir = null;
 const _camDir = new THREE.Vector3();
 let _frustumEvalTime = 0;
+
+// Spatial grid utilities
+function _getGridCell(chunkX, chunkZ) {
+    const cellX = Math.floor(chunkX / GRID_SIZE);
+    const cellZ = Math.floor(chunkZ / GRID_SIZE);
+    return `${cellX},${cellZ}`;
+}
+
+function _buildSpatialGrid() {
+    _spatialGrid = new Map();
+    globalChunks.forEach((entry, key) => {
+        const cellKey = _getGridCell(entry.chunkX, entry.chunkZ);
+        if (!_spatialGrid.has(cellKey)) _spatialGrid.set(cellKey, new Set());
+        _spatialGrid.get(cellKey).add(key);
+    });
+    _gridDirty = false;
+}
+
+function _getNearbyGridCells(cameraChunkX, cameraChunkZ, maxDistance) {
+    const cells = new Set();
+    const cellRadius = Math.ceil(maxDistance / GRID_SIZE);
+    const cameraGridX = Math.floor(cameraChunkX / GRID_SIZE);
+    const cameraGridZ = Math.floor(cameraChunkZ / GRID_SIZE);
+    for (let dx = -cellRadius; dx <= cellRadius; dx++) {
+        for (let dz = -cellRadius; dz <= cellRadius; dz++) {
+            cells.add(`${cameraGridX + dx},${cameraGridZ + dz}`);
+        }
+    }
+    return cells;
+}
+
+// Collision broad-phase grid utilities
+function _updateCollisionHeightGrid(terrainPosX, terrainPosZ) {
+    if (!_collisionHeightGrid) _collisionHeightGrid = new Map();
+    const cellX = Math.floor(terrainPosX / COLLISION_GRID_SCALE);
+    const cellZ = Math.floor(terrainPosZ / COLLISION_GRID_SCALE);
+    const cellKey = `${cellX},${cellZ}`;
+    
+    // Sample 9 points around the cell center to estimate min/max
+    let minY = Infinity, maxY = -Infinity;
+    for (let dx = -1; dx <= 1; dx++) {
+        for (let dz = -1; dz <= 1; dz++) {
+            const sampleX = (cellX + dx) * COLLISION_GRID_SCALE;
+            const sampleZ = (cellZ + dz) * COLLISION_GRID_SCALE;
+            const height = getHeightScaled(sampleX, sampleZ, 1.0);
+            minY = Math.min(minY, height);
+            maxY = Math.max(maxY, height);
+        }
+    }
+    _collisionHeightGrid.set(cellKey, { minY, maxY });
+}
+
+export function checkTerrainBroadPhase(aircraftX, aircraftZ, aircraftY, margin = 50) {
+    const cellX = Math.floor(aircraftX / COLLISION_GRID_SCALE);
+    const cellZ = Math.floor(aircraftZ / COLLISION_GRID_SCALE);
+    const cellKey = `${cellX},${cellZ}`;
+    
+    if (!_collisionHeightGrid) return true; // Conservative: assume collision possible
+    const cell = _collisionHeightGrid.get(cellKey);
+    if (!cell) return true; // Unknown terrain, check detailed
+    
+    // Aircraft is well above terrain: collision impossible
+    return aircraftY > cell.maxY + margin;
+}
 
 export function toggleWireframe() {
     const on = !_terrainMaterials[0]?.wireframe;
@@ -855,7 +937,8 @@ export function updateChunks(scene, camera, frustum, vx = 0, vz = 0) {
 
         for (const item of _toAdd) {
             if (addChunkToBucket(scene, item.x, item.z, item.lod)) {
-                globalChunks.set(item.chunkKey, { chunkX: item.x, chunkZ: item.z, lod: item.lod, renderLod: item.lod, hidden: true });
+                globalChunks.set(item.chunkKey, { chunkX: item.x, chunkZ: item.z, lod: item.lod, renderLod: item.lod, hidden: true, version: _chunkVersionCounter });
+                _migrationVersions.set(item.chunkKey, _chunkVersionCounter);
                 _chunksHidden++;
             }
         }
@@ -863,6 +946,11 @@ export function updateChunks(scene, camera, frustum, vx = 0, vz = 0) {
         _chunkGenTime = performance.now() - _start;
         _chunksAdded = _toAdd.length;
         _chunksRemoved = _toRemove.length;
+
+        // Mark grid dirty when chunks added/removed
+        if (_toAdd.length > 0 || _toRemove.length > 0) {
+            _gridDirty = true;
+        }
 
         _frustumDir = null;
         _lastFullScanCX = cameraChunkX;
@@ -879,16 +967,30 @@ export function updateChunks(scene, camera, frustum, vx = 0, vz = 0) {
     // Per-frame stale chunk removal: chunks that drifted beyond horizon range
     // between boundary crossings are removed immediately (freeing bucket slots
     // for stuck migrations). Uses a generous margin to avoid thrashing at the edge.
+    // Also cleans stale migration queue entries with mismatched versions.
     const _CLEANUP_MARGIN = 5;
     globalChunks.forEach((entry, key) => {
         const dx = Math.abs(entry.chunkX - cameraChunkX);
         const dz = Math.abs(entry.chunkZ - cameraChunkZ);
         if (dx > RENDER_DISTANCE_HORIZON + _CLEANUP_MARGIN || dz > RENDER_DISTANCE_HORIZON + _CLEANUP_MARGIN) {
             _migrateQueue.delete(key);
+            _migrationVersions.delete(key);
             removeChunkFromBucket(entry.chunkX, entry.chunkZ, entry.renderLod ?? entry.lod, entry.hidden);
             globalChunks.delete(key);
+            _gridDirty = true;
+            _chunkVersionCounter++;
         }
     });
+
+    // Clean stale migration queue entries (chunks deleted before migration completed)
+    for (const [queueKey, queueItem] of _migrateQueue) {
+        const queueVersion = _migrationVersions.get(queueKey);
+        const chunkEntry = globalChunks.get(queueKey);
+        if (!chunkEntry || chunkEntry.version !== queueVersion) {
+            _migrateQueue.delete(queueKey);
+            _migrationVersions.delete(queueKey);
+        }
+    }
     const migStart = performance.now();
     const pending = _migrateQueue.size;
     const migBudget = pending > 0
@@ -897,20 +999,44 @@ export function updateChunks(scene, camera, frustum, vx = 0, vz = 0) {
     processMigrationQueue(scene, migBudget);
     _chunkGenTime += performance.now() - migStart;
 
+    // Update collision height grid around aircraft for broad-phase
+    _updateCollisionHeightGrid(camera.position.x, camera.position.z);
+
     // Frustum re-evaluation: shows/hides chunks based on camera facing
-    // Runs when camera rotates significantly (direction dot < 0.965 ≈ 15°)
-    const dirChanged = _frustumDir === null || _camDir.dot(_frustumDir) < 0.965;
+    // Early-exit optimization: skip if camera position/direction unchanged within thresholds
+    let frustumChanged = false;
+    if (_lastFrustumCamX === null ||
+        Math.abs(camera.position.x - _lastFrustumCamX) > FRUSTUM_POSITION_THRESHOLD ||
+        Math.abs(camera.position.z - _lastFrustumCamZ) > FRUSTUM_POSITION_THRESHOLD ||
+        _camDir.dot(_lastFrustumCamDir) < FRUSTUM_DIRECTION_THRESHOLD) {
+        frustumChanged = true;
+        _lastFrustumCamX = camera.position.x;
+        _lastFrustumCamZ = camera.position.z;
+        _lastFrustumCamDir.copy(_camDir);
+    }
 
-    if (dirChanged) {
-        if (!_frustumDir) _frustumDir = new THREE.Vector3();
-        _frustumDir.copy(_camDir);
-
+    if (frustumChanged) {
         _chunksHidden = 0;
         _chunksUnhidden = 0;
 
         const reEvalStart = performance.now();
 
-        globalChunks.forEach((entry) => {
+        // Rebuild spatial grid if dirty (from chunk adds/removes)
+        if (_gridDirty) _buildSpatialGrid();
+
+        // Only test chunks in nearby grid cells instead of all chunks
+        const nearbyCells = _getNearbyGridCells(cameraChunkX, cameraChunkZ, RENDER_DISTANCE_HORIZON);
+        const chunksToTest = new Set();
+        nearbyCells.forEach(cellKey => {
+            const cellChunks = _spatialGrid.get(cellKey);
+            if (cellChunks) cellChunks.forEach(chunkKey => chunksToTest.add(chunkKey));
+        });
+
+        // Test only nearby chunks, skip others (already off-camera)
+        chunksToTest.forEach(chunkKey => {
+            const entry = globalChunks.get(chunkKey);
+            if (!entry) return;
+            
             const x = entry.chunkX, z = entry.chunkZ;
             const renderLod = entry.renderLod ?? entry.lod;
             const range = LOD_HEIGHT_RANGES[renderLod];

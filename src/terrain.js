@@ -254,6 +254,11 @@ export function getHeightScaled(worldX, worldZ, lodScale = 1.0) {
     return getHeight(worldX, worldZ);
 }
 
+export function getHeightGrid(worldX, worldZ) {
+    // Get raw height for collision grid building (no scaling)
+    return getHeight(worldX, worldZ);
+}
+
 export function enableWorker() {
     if (_workerMode) return;
     _workerMode = true;

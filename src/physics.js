@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { getHeightScaled } from './terrain.js';
+import { checkTerrainBroadPhase } from './world.js';
 
 const planeGeometry = new THREE.BoxGeometry(4, 1, 8);
 const planeMaterial = new THREE.MeshStandardMaterial({ color: 0xff3aae, metalness: 0.2, roughness: 0.6 });
@@ -140,6 +141,10 @@ let debugVectorArrowsVisible = false;
 let _physicsTime = 0;
 let _cachedTerrainPos = null;
 let _cachedTerrainHeight = 0;
+
+// Orientation caching: avoid recomputing forward/up/right vectors
+let _cachedOrientationQuat = new THREE.Quaternion();
+let _orientationCacheDirty = true;
 let _collisionsEnabled = true;
 let _crashed = false;
 let _crashPos = new THREE.Vector3();
@@ -456,9 +461,17 @@ export function updatePlane(dt) {
 
     throttle = THREE.MathUtils.clamp(throttle + throttleInput * 3.0 * dt, 0, 1);
 
-    forward.set(0, 0, -1).applyQuaternion(plane.quaternion).normalize();
-    up.set(0, 1, 0).applyQuaternion(plane.quaternion).normalize();
-    right.set(1, 0, 0).applyQuaternion(plane.quaternion).normalize();
+    // Cache orientation vectors: recompute only if quaternion changed
+    if (!plane.quaternion.equals(_cachedOrientationQuat)) {
+        _cachedOrientationQuat.copy(plane.quaternion);
+        _orientationCacheDirty = true;
+    }
+    if (_orientationCacheDirty) {
+        forward.set(0, 0, -1).applyQuaternion(plane.quaternion).normalize();
+        up.set(0, 1, 0).applyQuaternion(plane.quaternion).normalize();
+        right.set(1, 0, 0).applyQuaternion(plane.quaternion).normalize();
+        _orientationCacheDirty = false;
+    }
 
     const speed = velocity.length();
     if (speed > 0.001) {
@@ -516,9 +529,17 @@ export function updatePlane(dt) {
     plane.rotateY(angVel.y * dt);
     plane.rotateZ(angVel.z * dt);
 
-    forward.set(0, 0, -1).applyQuaternion(plane.quaternion).normalize();
-    up.set(0, 1, 0).applyQuaternion(plane.quaternion).normalize();
-    right.set(1, 0, 0).applyQuaternion(plane.quaternion).normalize();
+    // Mark orientation cache dirty; will be recomputed in next checks
+    _orientationCacheDirty = true;
+
+    // Reuse cached orientation if available, otherwise recompute
+    if (_orientationCacheDirty) {
+        forward.set(0, 0, -1).applyQuaternion(plane.quaternion).normalize();
+        up.set(0, 1, 0).applyQuaternion(plane.quaternion).normalize();
+        right.set(1, 0, 0).applyQuaternion(plane.quaternion).normalize();
+        _cachedOrientationQuat.copy(plane.quaternion);
+        _orientationCacheDirty = false;
+    }
 
     inverseQuaternion.copy(plane.quaternion).invert();
     localVelocity.copy(velocity).applyQuaternion(inverseQuaternion);
@@ -596,35 +617,44 @@ export function updatePlane(dt) {
     if (!_crashed) {
         const impactSpeed = velocity.length();
         const px = plane.position.x, pz = plane.position.z;
-        let terrainY;
-        if (_cachedTerrainPos && Math.abs(_cachedTerrainPos.x - px) < 5 && Math.abs(_cachedTerrainPos.z - pz) < 5) {
-            terrainY = _cachedTerrainHeight;
-        } else {
-            _cachedTerrainPos = { x: px, z: pz };
-            terrainY = _cachedTerrainHeight = getHeightScaled(px, pz, 1.0);
-        }
-        if (plane.position.y < terrainY) {
-            if (_collisionsEnabled) {
-                const craftPitch = Math.asin(THREE.MathUtils.clamp(forward.y, -1, 1));
-                const craftBank = Math.atan2(right.y, up.y);
-                const isLevel = Math.abs(craftPitch) <= deg(15) && Math.abs(craftBank) <= deg(15);
-                const hardDesc = velocity.y < -8;
-                const overspeed = impactSpeed >= AIRCRAFT.crashSpeed;
-                if (!isLevel || hardDesc || overspeed) {
-                    _crashed = true;
-                    _crashPos.copy(plane.position);
-                    _crashSpeed = impactSpeed;
-                    plane.visible = false;
-                    for (const fn of _crashCallbacks) fn(_crashPos.clone(), _crashSpeed);
+        
+        // Broad-phase check: skip detailed collision if aircraft well above terrain
+        const broadPhaseOk = checkTerrainBroadPhase(px, pz, plane.position.y, 100);
+        
+        if (!broadPhaseOk) {
+            // Possibly colliding: do detailed check
+            let terrainY;
+            if (_cachedTerrainPos && Math.abs(_cachedTerrainPos.x - px) < 5 && Math.abs(_cachedTerrainPos.z - pz) < 5) {
+                terrainY = _cachedTerrainHeight;
+            } else {
+                _cachedTerrainPos = { x: px, z: pz };
+                terrainY = _cachedTerrainHeight = getHeightScaled(px, pz, 1.0);
+            }
+            if (plane.position.y < terrainY) {
+                if (_collisionsEnabled) {
+                    const craftPitch = Math.asin(THREE.MathUtils.clamp(forward.y, -1, 1));
+                    const craftBank = Math.atan2(right.y, up.y);
+                    const isLevel = Math.abs(craftPitch) <= deg(15) && Math.abs(craftBank) <= deg(15);
+                    const hardDesc = velocity.y < -8;
+                    const overspeed = impactSpeed >= AIRCRAFT.crashSpeed;
+                    if (!isLevel || hardDesc || overspeed) {
+                        _crashed = true;
+                        _crashPos.copy(plane.position);
+                        _crashSpeed = impactSpeed;
+                        plane.visible = false;
+                        for (const fn of _crashCallbacks) fn(_crashPos.clone(), _crashSpeed);
+                    } else {
+                        plane.position.y = terrainY;
+                        if (velocity.y < 0) velocity.y = 0;
+                    }
                 } else {
                     plane.position.y = terrainY;
                     if (velocity.y < 0) velocity.y = 0;
                 }
-            } else {
-                plane.position.y = terrainY;
-                if (velocity.y < 0) velocity.y = 0;
             }
-        } else if (plane.position.y < 2) {
+        }
+        
+        if (plane.position.y < 2) {
             plane.position.y = 2;
             if (velocity.y < 0) velocity.y = 0;
         }

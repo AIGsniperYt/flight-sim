@@ -3,7 +3,6 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
-import { FXAAShader } from 'three/addons/shaders/FXAAShader.js';
 import { Sky } from 'three/addons/objects/Sky.js';
 import { updateChunks, getChunkStats, getLodGeometryStats, toggleGapMode, getShowGaps, toggleWireframe, getWireframe, setCraterData, getMaxCraters } from './src/world.js';
 import { getTerrainStats, getHeightScaled } from './src/terrain.js';
@@ -97,14 +96,11 @@ renderer.domElement.addEventListener('contextmenu', (event) => event.preventDefa
 const composer = new EffectComposer(renderer);
 composer.addPass(new RenderPass(scene, camera));
 
-const fxaaPass = new ShaderPass(FXAAShader);
 const pixelRatio = renderer.getPixelRatio();
-fxaaPass.uniforms.resolution.value.set(1 / (window.innerWidth * pixelRatio), 1 / (window.innerHeight * pixelRatio));
-composer.addPass(fxaaPass);
-
-const CinematicShader = {
+const MergedFXAA_CinematicShader = {
     uniforms: {
         tDiffuse: { value: null },
+        resolution: { value: new THREE.Vector2(1 / (window.innerWidth * pixelRatio), 1 / (window.innerHeight * pixelRatio)) },
         vignetteIntensity: { value: 0.12 },
         vignetteFeather: { value: 0.25 },
         saturation: { value: 0.8 },
@@ -124,6 +120,7 @@ const CinematicShader = {
     `,
     fragmentShader: `
         uniform sampler2D tDiffuse;
+        uniform vec2 resolution;
         uniform float vignetteIntensity;
         uniform float vignetteFeather;
         uniform float saturation;
@@ -145,8 +142,48 @@ const CinematicShader = {
             return clamp((c * (a * c + b)) / (c * (c_ * c + d) + e), 0.0, 1.0);
         }
 
+        // FXAA implementation
+        vec4 fxaa(sampler2D tex, vec2 uv, vec2 res) {
+            vec3 colorCenter = texture2D(tex, uv).rgb;
+            vec3 colorLeft = texture2D(tex, uv + vec2(-1.0, 0.0) * res).rgb;
+            vec3 colorRight = texture2D(tex, uv + vec2(1.0, 0.0) * res).rgb;
+            vec3 colorUp = texture2D(tex, uv + vec2(0.0, 1.0) * res).rgb;
+            vec3 colorDown = texture2D(tex, uv + vec2(0.0, -1.0) * res).rgb;
+
+            vec3 luma = vec3(0.299, 0.587, 0.114);
+            float lumaCenter = dot(colorCenter, luma);
+            float lumaLeft = dot(colorLeft, luma);
+            float lumaRight = dot(colorRight, luma);
+            float lumaUp = dot(colorUp, luma);
+            float lumaDown = dot(colorDown, luma);
+
+            float lumaMin = min(lumaCenter, min(min(lumaLeft, lumaRight), min(lumaUp, lumaDown)));
+            float lumaMax = max(lumaCenter, max(max(lumaLeft, lumaRight), max(lumaUp, lumaDown)));
+            float lumaDelta = lumaMax - lumaMin;
+            float lumaSum = lumaLeft + lumaRight + lumaUp + lumaDown;
+            float edgeDetect = abs((2.0 * lumaCenter) - lumaSum);
+            float threshold = max(0.0833, lumaDelta / lumaMax);
+
+            if (edgeDetect < threshold) {
+                return vec4(colorCenter, 1.0);
+            }
+
+            // Simple edge correction
+            float horizontal = abs((lumaLeft + lumaRight) - 2.0 * lumaCenter);
+            float vertical = abs((lumaUp + lumaDown) - 2.0 * lumaCenter);
+
+            if (horizontal > vertical) {
+                colorCenter = mix(colorCenter, 0.5 * (colorLeft + colorRight), 0.25);
+            } else {
+                colorCenter = mix(colorCenter, 0.5 * (colorUp + colorDown), 0.25);
+            }
+
+            return vec4(colorCenter, 1.0);
+        }
+
         void main() {
-            vec4 color = texture2D(tDiffuse, vUv);
+            // Apply FXAA
+            vec4 color = fxaa(tDiffuse, vUv, resolution);
 
             // Contrast
             color.rgb = (color.rgb - 0.5) * contrast + 0.5;
@@ -180,9 +217,9 @@ const CinematicShader = {
     `
 };
 
-const cinematicPass = new ShaderPass(CinematicShader);
-cinematicPass.renderToScreen = true;
-composer.addPass(cinematicPass);
+const mergedPass = new ShaderPass(MergedFXAA_CinematicShader);
+mergedPass.renderToScreen = true;
+composer.addPass(mergedPass);
 
 const cameraControls = new OrbitControls(camera, renderer.domElement);
 cameraControls.enableDamping = true;
@@ -1357,7 +1394,7 @@ function updateStallWarning() {
 function updateGForceEffect() {
   if (!gForceEffectEnabled) {
     gForceOverlay.style.opacity = '0';
-    cinematicPass.uniforms.gForce.value = 0;
+    mergedPass.uniforms.gForce.value = 0;
     return;
   }
   const g = getFlightState().gForce;
@@ -1377,7 +1414,7 @@ function updateGForceEffect() {
   // Greyscale starts at 6.5G (peripheral colour loss → full grey-out)
   const overGDesat = Math.max(0, absG - 6.5);
   const desatSeverity = Math.min(1, overGDesat / 3);
-  cinematicPass.uniforms.gForce.value = desatSeverity;
+  mergedPass.uniforms.gForce.value = desatSeverity;
 
   // CSS overlay: vignette tunnel + red tint
   if (severity > 0 || redTint > 0) {
