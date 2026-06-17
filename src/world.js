@@ -231,7 +231,7 @@ let showGaps = false;
 const LOD_CONFIGS = {
     near: { step: 1, scale: 1.0, maxChunks: 250 },
     mid: { step: 5, scale: 0.5, maxChunks: 700 },
-    far: { step: 10, scale: 0.1, maxChunks: 2400 },
+    far: { step: 10, scale: 0.1, maxChunks: 2700 },
     ultra: { step: 25, scale: 0.02, maxChunks: 8700 },
     horizon: { step: 50, scale: 0.001, maxChunks: 32000 }
 };
@@ -246,6 +246,7 @@ const LOD_HEIGHT_RANGES = {
 const FRUSTUM_MARGIN = CHUNK_SIZE;
 const MIGRATIONS_PER_FRAME = 50;
 const LOD_RANK = { near: 0, mid: 1, far: 2, ultra: 3, horizon: 4 };
+const LOD_ORDER = ["near", "mid", "far", "ultra", "horizon"]; // highest to lowest detail
 
 // Spatial grid for frustum culling: bins chunks into 8x8 cells for O(1) lookup
 const GRID_SIZE = 8;
@@ -756,16 +757,27 @@ function unhideChunkInBucket(chunkX, chunkZ, lod) {
     bucket.visibleCount++;
 }
 
+function tryAddChunkToBucket(scene, chunkX, chunkZ, desiredLod) {
+    const startIndex = LOD_ORDER.indexOf(desiredLod);
+    if (startIndex === -1) return null;
+    for (let i = startIndex; i < LOD_ORDER.length; i++) {
+        if (addChunkToBucket(scene, chunkX, chunkZ, LOD_ORDER[i])) {
+            return LOD_ORDER[i];
+        }
+    }
+    return null;
+}
+
 function migrateChunkLod(scene, chunkX, chunkZ, oldLod, newLod, wasHidden) {
-    const targetBucket = mergedMeshes[newLod];
-    if (!addChunkToBucket(scene, chunkX, chunkZ, newLod)) {
-        return false;
+    const actualLod = tryAddChunkToBucket(scene, chunkX, chunkZ, newLod);
+    if (actualLod === null) {
+        return null;
     }
     removeChunkFromBucket(chunkX, chunkZ, oldLod, wasHidden, true);
     if (!wasHidden) {
-        unhideChunkInBucket(chunkX, chunkZ, newLod);
+        unhideChunkInBucket(chunkX, chunkZ, actualLod);
     }
-    return true;
+    return actualLod;
 }
 
 function enqueueMigration(x, z, newLod, chunkKey) {
@@ -810,36 +822,46 @@ function processMigrationQueue(scene, budget, outwardOnly = false) {
         const isOutward = LOD_RANK[newLod] > LOD_RANK[renderLod];
         if (outwardOnly && !isOutward) continue;
 
-        if (!migrateChunkLod(scene, item.x, item.z, renderLod, newLod, entry.hidden)) {
-            break;
+        const result = migrateChunkLod(scene, item.x, item.z, renderLod, newLod, entry.hidden);
+        if (result === null) {
+            continue; // skip this chunk, try others — slot may free up later
         }
-        entry.renderLod = newLod;
-        entry.lod = newLod;
+        entry.renderLod = result;
+        entry.lod = result;
         _migrateQueue.delete(chunkKey);
         _chunksMigrated++;
         processed++;
     }
 }
 
-export function updateChunks(scene, camera, frustum, vx = 0, vz = 0, planeX, planeZ) {
+export function updateChunks(scene, camera, frustum, vx = 0, vz = 0, planeX, planeZ, centerX, centerZ, dirX, dirZ) {
     if (!initialized) initMeshes(scene);
 
-    const cameraChunkX = Math.floor(camera.position.x / CHUNK_SIZE);
-    const cameraChunkZ = Math.floor(camera.position.z / CHUNK_SIZE);
+    // Use plane position for chunk loading center (chase cam ~30m offset is negligible;
+    // orbit cam can be far away and spinning — must not trigger full scans or LOD shifts)
+    const refX = centerX !== undefined ? centerX : camera.position.x;
+    const refZ = centerZ !== undefined ? centerZ : camera.position.z;
+    const ndx = dirX !== undefined ? dirX : 0;
+    const ndz = dirZ !== undefined ? dirZ : 0;
 
-    // Camera direction for directional LOD rings
-    _camDir.set(0, 0, 0);
-    camera.getWorldDirection(_camDir);
-    const _hdx = _camDir.x;
-    const _hdz = _camDir.z;
-    const _hLen = Math.sqrt(_hdx * _hdx + _hdz * _hdz);
-    const ndx = _hLen > 0.001 ? _hdx / _hLen : 1;
-    const ndz = _hLen > 0.001 ? _hdz / _hLen : 0;
+    const cameraChunkX = Math.floor(refX / CHUNK_SIZE);
+    const cameraChunkZ = Math.floor(refZ / CHUNK_SIZE);
 
-    // Trigger full scan when camera rotates ~15 degrees
-    if (_lastScanDir === null || (ndx * _lastScanDir.x + ndz * _lastScanDir.z) < 0.965) {
+    // Direction for LOD ring shifts — use provided direction (plane forward),
+    // or fall back to camera direction (old behavior when not supplied)
+    let _ndx = ndx, _ndz = ndz;
+    if (ndx === 0 && ndz === 0) {
+        _camDir.set(0, 0, 0);
+        camera.getWorldDirection(_camDir);
+        const _hLen = Math.sqrt(_camDir.x * _camDir.x + _camDir.z * _camDir.z);
+        _ndx = _hLen > 0.001 ? _camDir.x / _hLen : 1;
+        _ndz = _hLen > 0.001 ? _camDir.z / _hLen : 0;
+    }
+
+    // Trigger full scan when direction changes ~15 degrees
+    if (_lastScanDir === null || (_ndx * _lastScanDir.x + _ndz * _lastScanDir.z) < 0.965) {
         if (!_lastScanDir) _lastScanDir = new THREE.Vector3();
-        _lastScanDir.set(ndx, 0, ndz);
+        _lastScanDir.set(_ndx, 0, _ndz);
         _lastCamCX = null;
     }
 
@@ -859,17 +881,17 @@ export function updateChunks(scene, camera, frustum, vx = 0, vz = 0, planeX, pla
 
         const _start = performance.now();
 
-        // Directional LOD ring shifts (chunk units forward along camera direction)
+        // Directional LOD ring shifts (chunk units forward along reference direction)
         const SHIFT_MID = 5;
         const SHIFT_FAR = 12;
         const SHIFT_ULTRA = 25;
 
-        const _midCX = cameraChunkX + Math.round(ndx * SHIFT_MID);
-        const _midCZ = cameraChunkZ + Math.round(ndz * SHIFT_MID);
-        const _farCX = cameraChunkX + Math.round(ndx * SHIFT_FAR);
-        const _farCZ = cameraChunkZ + Math.round(ndz * SHIFT_FAR);
-        const _ultraCX = cameraChunkX + Math.round(ndx * SHIFT_ULTRA);
-        const _ultraCZ = cameraChunkZ + Math.round(ndz * SHIFT_ULTRA);
+        const _midCX = cameraChunkX + Math.round(_ndx * SHIFT_MID);
+        const _midCZ = cameraChunkZ + Math.round(_ndz * SHIFT_MID);
+        const _farCX = cameraChunkX + Math.round(_ndx * SHIFT_FAR);
+        const _farCZ = cameraChunkZ + Math.round(_ndz * SHIFT_FAR);
+        const _ultraCX = cameraChunkX + Math.round(_ndx * SHIFT_ULTRA);
+        const _ultraCZ = cameraChunkZ + Math.round(_ndz * SHIFT_ULTRA);
 
         _newActive.clear();
         _toAdd.length = 0;
@@ -936,8 +958,9 @@ export function updateChunks(scene, camera, frustum, vx = 0, vz = 0, planeX, pla
         }
 
         for (const item of _toAdd) {
-            if (addChunkToBucket(scene, item.x, item.z, item.lod)) {
-                globalChunks.set(item.chunkKey, { chunkX: item.x, chunkZ: item.z, lod: item.lod, renderLod: item.lod, hidden: true, version: _chunkVersionCounter });
+            const actualLod = tryAddChunkToBucket(scene, item.x, item.z, item.lod);
+            if (actualLod !== null) {
+                globalChunks.set(item.chunkKey, { chunkX: item.x, chunkZ: item.z, lod: actualLod, renderLod: actualLod, hidden: true, version: _chunkVersionCounter });
                 _migrationVersions.set(item.chunkKey, _chunkVersionCounter);
                 _chunksHidden++;
             }

@@ -1981,7 +1981,7 @@ function animate() {
     lastCameraPos.copy(camera.position);
 
     // 3. World Streamers
-    { const _p = getPlane(); _autoDir.set(0, 0, -1).applyQuaternion(_p.quaternion); _autoOrigin.copy(_p.position).addScaledVector(_autoDir, 12); combat.updateAutoFire(dt, _autoOrigin, _autoDir); combat.update(dt, _p.position, _p.quaternion); updateChunks(scene, camera, frustum, cameraVelocity.x, cameraVelocity.z, _p.position.x, _p.position.z); }
+    { const _p = getPlane(); _autoDir.set(0, 0, -1).applyQuaternion(_p.quaternion); _autoOrigin.copy(_p.position).addScaledVector(_autoDir, 12); combat.updateAutoFire(dt, _autoOrigin, _autoDir); combat.update(dt, _p.position, _p.quaternion); updateChunks(scene, camera, frustum, cameraVelocity.x, cameraVelocity.z, _p.position.x, _p.position.z, _p.position.x, _p.position.z, _autoDir.x, _autoDir.z); }
     triggerShake(combat.getCameraShakeThisFrame());
     if (_lockMode) {
         const _p2 = getPlane();

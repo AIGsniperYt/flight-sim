@@ -9,6 +9,94 @@
 
 ---
 
+## **16/06/2026 — Use plane pos/dir for chunk loading (orbit cam spinning no longer floods queue)**
+
+**What changed:** Chunk loading center and directional LOD shifts now use the **plane** position and forward direction instead of the camera. In orbit mode, spinning the camera no longer triggers any full scans or LOD migrations — chunk loading is completely decoupled from camera movement.
+
+### Root cause
+
+Before: `updateChunks` used `camera.position` for the scan center and `camera.getWorldDirection` for LOD ring shifts. In orbit mode, dragging the camera rapidly:
+1. Crosses chunk boundaries 10+ times/sec → full scan of 40K chunks each time
+2. Changes camera direction 360°/sec → every chunk's LOD reassigned on each scan
+3. Floods the migration queue with tens of thousands of entries per frame
+4. Destroys FPS and causes migration failures
+
+### Fix (`world.js` + `main.js`)
+
+`updateChunks` now accepts optional `centerX, centerZ, dirX, dirZ` params. When provided, these override the camera position/direction for scan center and LOD shifts. The call site passes the plane's position and forward `_autoDir`.
+
+```js
+// before: camera-centered, camera-directional
+const cameraChunkX = Math.floor(camera.position.x / CHUNK_SIZE);
+_camDir.set(0, 0, 0);
+camera.getWorldDirection(_camDir);
+
+// after: plane-centered, plane-directional (camera only used for frustum culling)
+const refX = centerX !== undefined ? centerX : camera.position.x;
+// direction falls back to camera.getWorldDirection when not supplied
+```
+
+Result: plane direction changes only when the aircraft banks — infrequent and smooth. No scan/migration activity from orbit camera spinning.
+
+Distance-based scan trigger (every 3 chunks without boundary crossing) and `_CLEANUP_MARGIN` cleanup both operate on the new reference position, so out-of-range chunks are still cleaned up promptly.
+
+---
+
+## **16/06/2026 — Fix migration deadlock and cascading LOD fallback**
+
+**What changed:** Migration system no longer deadlocks when a target LOD bucket is full. Chunks fall back to the next available lower LOD instead of failing permanently. The `break` on migration failure is now `continue` so one stuck chunk doesn't block all others.
+
+### 1. Root cause — bucket capacity mismatch + `break` on failure
+
+The `far` bucket had `maxChunks: 2400` but the far ring area is `(2×25+1)² = 2601` chunks. The 201 overflow was assigned `ultra` LOD during initial load. On the first camera movement, these 201 chunks needed outward migration `ultra→far`, but `far` had zero free slots. `processMigrationQueue` used `break` on failure — blocking ALL outward migrations, which blocked all new chunk additions and inward migrations. Deadlocked forever.
+
+In orbit mode, rapid camera direction changes constantly shift LOD rings, flooding the queue and hitting the deadlock more frequently.
+
+### 2. Fix: cascading LOD fallback (`world.js`)
+
+```js
+// before: migrates only to the requested LOD, breaks on failure
+function addChunkToBucket(scene, chunkX, chunkZ, lod) {
+    const slot = bucket.freeSlots.pop();
+    if (slot === undefined) return false; // hard fail
+    // ...
+}
+
+function migrateChunkLod(scene, ...) {
+    if (!addChunkToBucket(scene, chunkX, chunkZ, newLod)) return false;
+    // ...
+}
+
+// after: tries each lower LOD until one has a free slot
+function tryAddChunkToBucket(scene, chunkX, chunkZ, desiredLod) {
+    const startIndex = LOD_ORDER.indexOf(desiredLod);
+    for (let i = startIndex; i < LOD_ORDER.length; i++) {
+        if (addChunkToBucket(scene, chunkX, chunkZ, LOD_ORDER[i])) {
+            return LOD_ORDER[i]; // actual LOD used
+        }
+    }
+    return null;
+}
+```
+
+### 3. Fix: `break` → `continue` (`world.js`)
+
+```js
+// before: one failure halts all migration processing
+if (!migrateChunkLod(...)) { break; }
+
+// after: skip failed chunk, try next — freed slots may unblock it next frame
+const result = migrateChunkLod(...);
+if (result === null) { continue; }
+entry.renderLod = result;  // actual LOD (may be lower than requested)
+```
+
+### 4. Fix: far bucket `maxChunks` increased 2400→2700
+
+The far ring area is 51×51=2601. Bucket capacity was 2400, causing 201 guaranteed overflow to ultra on every scan. Capacity now matches its ring.
+
+---
+
 ## **16/06/2026 — Wild shake: rumble + rotation, two-component decay**
 
 **What changed:** Shake split into fast-decaying impact jolt and slow-decaying oscillatory rumble. Added camera rotation shake (pitch/yaw/roll). Crash decay rate 3→8/s for sharp punch, then 2.5/s shudder tail.
