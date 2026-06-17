@@ -9,6 +9,179 @@
 
 ---
 
+## **16/06/2026 — Wild shake: rumble + rotation, two-component decay**
+
+**What changed:** Shake split into fast-decaying impact jolt and slow-decaying oscillatory rumble. Added camera rotation shake (pitch/yaw/roll). Crash decay rate 3→8/s for sharp punch, then 2.5/s shudder tail.
+
+### 1. Two-component model (`main.js`)
+
+```js
+// before: single white noise, linear decay 3/s
+let _shakeIntensity = 0;
+const _shakeDecayRate = 3;
+const amp = _shakeIntensity * 0.5;
+_shakeOffset.set(
+    (Math.random() * 2 - 1) * amp,
+    (Math.random() * 2 - 1) * amp,
+    (Math.random() * 2 - 1) * amp * 0.3
+);
+_shakeIntensity *= Math.max(0, 1 - _shakeDecayRate * dt);
+
+// after: impact + rumble + rotation
+let _shakeIntensity = 0;      // impact — decays 8/s
+let _shakeRumble = 0;         // shudder — decays 2.5/s
+let _shakeTime = 0;
+
+function triggerShake(intensity) {
+    _shakeIntensity = Math.max(_shakeIntensity, intensity);
+    _shakeRumble = Math.max(_shakeRumble, intensity * 0.6);
+    _shakeTime = 0;
+}
+
+// Per-frame:
+_shakeTime += dt;
+const amp = _shakeIntensity * 0.5;
+const rample = _shakeRumble * 0.18;
+
+// White noise impact + sine-wave shudder
+_shakeOffset.set(
+    (Math.random() * 2 - 1) * amp + Math.sin(_shakeTime * 47 + 1.3) * rample,
+    (Math.random() * 2 - 1) * amp * 1.2 + Math.sin(_shakeTime * 39) * rample * 1.3,
+    (Math.random() * 2 - 1) * amp * 0.5 + Math.sin(_shakeTime * 53 + 0.7) * rample * 0.6
+);
+
+// Rotation: roll dominates (most disorienting)
+_shakeAngle.set(
+    (Math.random() * 2 - 1) * amp * 0.05,   // pitch
+    (Math.random() * 2 - 1) * amp * 0.025,  // yaw
+    (Math.random() * 2 - 1) * amp * 0.08    // roll
+);
+camera.quaternion.multiply(_shakeTempQuat.setFromEuler(
+    new THREE.Euler(_shakeAngle.x, _shakeAngle.y, _shakeAngle.z, 'YXZ')
+));
+```
+
+### 2. Why this works
+
+The old shake was uniform random — technically jittery but lacked *character*. A real crash has:
+- **Initial spike** — the impact whips your head around (fast random, large amplitude)
+- **Structural shudder** — the airframe vibrates at resonance frequencies after impact (slower sine oscillation)
+- **Rotation** — your viewpoint doesn't just translate, it *twists*. Roll shake is particularly visceral because it messes with your sense of horizon.
+
+---
+
+## **16/06/2026 — Stronger camera shake, coverage for all explosions, gentler distance falloff**
+
+**What changed:** Camera shake amplitude doubled (0.3→0.5). Crash shake is speed-proportional (caps at 24). All explosion types now trigger shake with exponential distance falloff. Direct missile hit increased 3→4.
+
+### 1. Stronger amplitude + speed-proportional crash (`main.js`)
+
+```js
+// before
+const amp = _shakeIntensity * 0.3;
+triggerShake(14);
+
+// after
+const amp = _shakeIntensity * 0.5;             // ±12 units at crash 24
+triggerShake(Math.min(24, 14 + speed * 0.05));  // faster impact = more shake
+```
+
+### 2. Shake for every explosion (`src/combat.js`)
+
+| Event | Before | After | Curve |
+|---|---|---|---|
+| Missile hits player | 3.0 | 4.0 | constant |
+| Missile hits enemy | — | 2.0×exp(−dist/150) | exponential |
+| Missile → enemy death | — | 3.0×exp(−dist/150) | exponential |
+| Missile ground impact | 2.0×(1−dist/100) | 2.5×exp(−dist/150) | exponential |
+| Bullet hits enemy | — | 0.6×exp(−dist/150) | exponential |
+| Bullet → enemy death | 1.0 | 1.5×exp(−dist/150) | exponential |
+
+```js
+// distance-scaled pattern used everywhere:
+if (playerPos) {
+    _tv2.copy(explosionPos).sub(playerPos);
+    _cameraShakeThisFrame = Math.max(_cameraShakeThisFrame, intensity * Math.exp(-Math.sqrt(_tv2.lengthSq()) / 150));
+}
+```
+
+### 3. Exponential falloff rationale
+
+Linear cutoff at 100m felt harsh — shaking stopped abruptly. Exponential exp(−d/150) gives:
+- ~63% strength at 150m, ~37% at 150m, ~14% at 300m
+- No hard cutoff, gentler rolloff, still dominant near point of impact
+
+---
+
+## **16/06/2026 — Camera shake on explosions**
+
+**What changed:** Camera now shakes when the player takes damage or is near explosions. Intensity by event: crash (14), player death from combat (8), missile direct hit (3), missile ground impact (distance-scaled, up to 2), enemy death (1).
+
+### 1. Shake state + chase camera integration (`main.js`)
+
+A decaying intensity envelope drives per-frame random jitter applied as local-space offset alongside the existing engine vibration. Decay rate 3/s gives ~2.3s shake duration from a crash.
+
+```js
+// Added: shake state + trigger function
+let _shakeIntensity = 0;
+const _shakeOffset = new THREE.Vector3();
+const _shakeDecayRate = 3;
+function triggerShake(intensity) {
+    _shakeIntensity = Math.max(_shakeIntensity, intensity);
+}
+
+// In chase camera block: per-frame jitter + apply
+if (_shakeIntensity > 0.01) {
+    const amp = _shakeIntensity * 0.3;
+    _shakeOffset.set(
+        (Math.random() * 2 - 1) * amp,
+        (Math.random() * 2 - 1) * amp,
+        (Math.random() * 2 - 1) * amp * 0.3
+    );
+    _shakeIntensity *= Math.max(0, 1 - _shakeDecayRate * dt);
+} else {
+    _shakeIntensity = 0;
+    _shakeOffset.set(0, 0, 0);
+}
+camera.position
+    .add(_shakeOffset.clone().applyQuaternion(plane.quaternion));
+```
+
+### 2. Combat → shake signal (`src/combat.js`)
+
+New `_cameraShakeThisFrame` accumulator, set at each explosion site:
+
+| Event | Intensity | Line |
+|---|---|---|
+| Missile hits player | 3.0 | `combat.js:512` |
+| Missile ground impact | 2.0 × (1 − dist/100) | `combat.js:524` |
+| Enemy death explosion | 1.0 | `combat.js:557` |
+
+```js
+export function getCameraShakeThisFrame() {
+    const v = _cameraShakeThisFrame;
+    _cameraShakeThisFrame = 0;
+    return v;
+}
+```
+
+### 3. Trigger sites in animate loop (`main.js`)
+
+```js
+triggerShake(combat.getCameraShakeThisFrame());
+
+onCrash((pos, speed) => {
+    triggerShake(14);  // fighter jet at 200+ m/s
+});
+
+createExplosion(deathPos, 300);
+triggerShake(8);
+```
+
+Shake is in local aircraft space so it jolts left/right/up regardless of aircraft attitude.
+
+---
+
 ## **16/06/2026 — Phase 1+2 aggressive performance optimisation: merged FXAA, orientation cache, spatial grid culling, collision broad-phase**
 
 **What changed:** Aggressive optimisations targeting GPU post-processing overhead (Phase 1) and CPU frustum culling + physics collision (Phase 2). Estimated gain: **3.5–5ms total (12–24% FPS improvement @ 60fps baseline)**.

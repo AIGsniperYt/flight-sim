@@ -33,6 +33,7 @@ let playerHealth = 100;
 const MAX_PLAYER_HEALTH = 100;
 let _hitThisFrame = false;
 let _killThisFrame = false;
+let _cameraShakeThisFrame = 0;
 
 let _playerLockTargetId = null;
 let _playerLockTimer = 0;
@@ -189,6 +190,7 @@ export function getPlayerHealth() { return playerHealth; }
 export function getMaxPlayerHealth() { return MAX_PLAYER_HEALTH; }
 export function getHitThisFrame() { return _hitThisFrame; }
 export function getKillThisFrame() { return _killThisFrame; }
+export function getCameraShakeThisFrame() { const v = _cameraShakeThisFrame; _cameraShakeThisFrame = 0; return v; }
 export function resetPlayer() {
     playerHealth = MAX_PLAYER_HEALTH;
     _playerLockTargetId = null;
@@ -428,6 +430,7 @@ export function update(dt, playerPos, playerQuat) {
     const now = performance.now();
     _hitThisFrame = false;
     _killThisFrame = false;
+    _cameraShakeThisFrame = 0;
 
     // Missiles
     for (let i = _missiles.length - 1; i >= 0; i--) {
@@ -469,7 +472,7 @@ export function update(dt, playerPos, playerQuat) {
             }
         }
 
-        m.mesh.position.addScaledVector(m.dir, MISSILE_SPEED * dt);
+                m.mesh.position.addScaledVector(m.dir, MISSILE_SPEED * dt);
 
         // Missile vs enemies
         let removed = false;
@@ -479,6 +482,10 @@ export function update(dt, playerPos, playerQuat) {
             if (_tv1.lengthSq() < MISSILE_HIT_RADIUS * MISSILE_HIT_RADIUS) {
                 e.hp -= 75;
                 spawnExplosion(m.mesh.position, 100);
+                if (playerPos) {
+                    _tv2.copy(m.mesh.position).sub(playerPos);
+                    _cameraShakeThisFrame = Math.max(_cameraShakeThisFrame, 2 * Math.exp(-Math.sqrt(_tv2.lengthSq()) / 150));
+                }
                 _group.remove(m.mesh);
                 _missiles.splice(i, 1);
                 removed = true;
@@ -488,6 +495,10 @@ export function update(dt, playerPos, playerQuat) {
                 if (e.hp <= 0) {
                     _killThisFrame = true;
                     spawnExplosion(e.mesh.position, 150);
+                    if (playerPos) {
+                        _tv2.copy(e.mesh.position).sub(playerPos);
+                        _cameraShakeThisFrame = Math.max(_cameraShakeThisFrame, 3 * Math.exp(-Math.sqrt(_tv2.lengthSq()) / 150));
+                    }
                     _group.remove(e.mesh);
                     _group.remove(e.trail.line);
                     e.trail.line.geometry.dispose();
@@ -506,6 +517,7 @@ export function update(dt, playerPos, playerQuat) {
             if (_tv1.lengthSq() < MISSILE_HIT_RADIUS * MISSILE_HIT_RADIUS) {
                 playerHealth = Math.max(0, playerHealth - 50);
                 spawnExplosion(m.mesh.position, 100);
+                _cameraShakeThisFrame = Math.max(_cameraShakeThisFrame, 4);
                 _group.remove(m.mesh);
                 _missiles.splice(i, 1);
                 continue;
@@ -517,6 +529,9 @@ export function update(dt, playerPos, playerQuat) {
             if (m.mesh.position.y < terrainY) {
                 explode(m.mesh.position, 40, 20);
                 spawnExplosion(m.mesh.position, 100);
+                if (playerPos) {
+                    _cameraShakeThisFrame = Math.max(_cameraShakeThisFrame, 2.5 * Math.exp(-Math.sqrt(_tv1.lengthSq()) / 150));
+                }
             }
             _group.remove(m.mesh);
             _missiles.splice(i, 1);
@@ -542,6 +557,10 @@ export function update(dt, playerPos, playerQuat) {
             if (_tv1.lengthSq() < BULLET_HIT_RADIUS * BULLET_HIT_RADIUS) {
                 e.hp -= 15;
                 spawnHitParticles(b.tipPos);
+                if (playerPos) {
+                    _tv2.copy(b.tipPos).sub(playerPos);
+                    _cameraShakeThisFrame = Math.max(_cameraShakeThisFrame, 0.6 * Math.exp(-Math.sqrt(_tv2.lengthSq()) / 150));
+                }
                 _hitThisFrame = true;
                 _group.remove(b.mesh);
                 _bullets.splice(i, 1);
@@ -549,6 +568,10 @@ export function update(dt, playerPos, playerQuat) {
                 if (e.hp <= 0) {
                     _killThisFrame = true;
                     spawnExplosion(e.mesh.position, 150);
+                    if (playerPos) {
+                        _tv2.copy(e.mesh.position).sub(playerPos);
+                        _cameraShakeThisFrame = Math.max(_cameraShakeThisFrame, 1.5 * Math.exp(-Math.sqrt(_tv2.lengthSq()) / 150));
+                    }
                     _group.remove(e.mesh);
                     _group.remove(e.trail.line);
                     e.trail.line.geometry.dispose();

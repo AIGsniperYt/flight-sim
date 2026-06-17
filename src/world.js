@@ -821,7 +821,7 @@ function processMigrationQueue(scene, budget, outwardOnly = false) {
     }
 }
 
-export function updateChunks(scene, camera, frustum, vx = 0, vz = 0) {
+export function updateChunks(scene, camera, frustum, vx = 0, vz = 0, planeX, planeZ) {
     if (!initialized) initMeshes(scene);
 
     const cameraChunkX = Math.floor(camera.position.x / CHUNK_SIZE);
@@ -1000,7 +1000,7 @@ export function updateChunks(scene, camera, frustum, vx = 0, vz = 0) {
     _chunkGenTime += performance.now() - migStart;
 
     // Update collision height grid around aircraft for broad-phase
-    _updateCollisionHeightGrid(camera.position.x, camera.position.z);
+    _updateCollisionHeightGrid(planeX !== undefined ? planeX : camera.position.x, planeZ !== undefined ? planeZ : camera.position.z);
 
     // Frustum re-evaluation: shows/hides chunks based on camera facing
     // Early-exit optimization: skip if camera position/direction unchanged within thresholds

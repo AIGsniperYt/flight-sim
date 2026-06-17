@@ -258,6 +258,20 @@ const CAM_SLERP_RATE = 20.0;
 const _gBodyOffset = new THREE.Vector3();
 const _gBodyTarget = new THREE.Vector3();
 let _vibTime = 0;
+let _shakeIntensity = 0;
+let _shakeRumble = 0;
+let _shakeTime = 0;
+const _shakeOffset = new THREE.Vector3();
+const _shakeAngle = new THREE.Vector3();
+const _shakeDecayRate = 8;
+const _shakeRumbleDecay = 2.5;
+const _shakeTempQuat = new THREE.Quaternion();
+const _shakeTempEuler = new THREE.Euler();
+function triggerShake(intensity) {
+    _shakeIntensity = Math.max(_shakeIntensity, intensity);
+    _shakeRumble = Math.max(_shakeRumble, intensity * 0.6);
+    _shakeTime = 0;
+}
 const freeCamKeys = { w: false, a: false, s: false, d: false, q: false, e: false };
 const freeCamBaseSpeed = 80;
 let freeCamSpeedMul = 1;
@@ -1545,6 +1559,35 @@ function updateOrbitCamera(dt) {
     camera.fov = _currentFov;
     camera.updateProjectionMatrix();
 
+    // Camera shake update — runs every frame regardless of camera mode
+    if (_shakeIntensity > 0.005 || _shakeRumble > 0.005) {
+        _shakeTime += dt;
+        const amp = _shakeIntensity * 0.5;
+        const rample = _shakeRumble * 0.18;
+
+        // Impact jolt (white noise, decays fast) + structural shudder (sine oscillations, decays slow)
+        _shakeOffset.set(
+            (Math.random() * 2 - 1) * amp + Math.sin(_shakeTime * 47 + 1.3) * rample,
+            (Math.random() * 2 - 1) * amp * 1.2 + Math.sin(_shakeTime * 39) * rample * 1.3,
+            (Math.random() * 2 - 1) * amp * 0.5 + Math.sin(_shakeTime * 53 + 0.7) * rample * 0.6
+        );
+
+        // Rotation shake: camera wrenches around — roll is most dramatic
+        _shakeAngle.set(
+            (Math.random() * 2 - 1) * amp * 0.05,   // pitch jitter
+            (Math.random() * 2 - 1) * amp * 0.025,  // yaw jitter
+            (Math.random() * 2 - 1) * amp * 0.08    // roll jitter (biggest)
+        );
+
+        _shakeIntensity *= Math.max(0, 1 - _shakeDecayRate * dt);
+        _shakeRumble *= Math.max(0, 1 - _shakeRumbleDecay * dt);
+    } else {
+        _shakeIntensity = 0;
+        _shakeRumble = 0;
+        _shakeOffset.set(0, 0, 0);
+        _shakeAngle.set(0, 0, 0);
+    }
+
     if (cameraMode === 'chase') {
         const worldOffset = defaultCameraOffset.clone().applyQuaternion(plane.quaternion);
         const targetPull = Math.max(0, Math.min(_fovSpeed / 200, 1) * 8 - THREE.MathUtils.clamp(-thrDelta * 0.3, 0, 2) - (airbrakes ? 4 : 0));
@@ -1574,10 +1617,16 @@ function updateOrbitCamera(dt) {
             .add(worldOffset)
             .addScaledVector(_camBackDir, _smoothPull)
             .add(gWorldOffset)
-            .add(vib.clone().applyQuaternion(plane.quaternion));
+            .add(vib.clone().applyQuaternion(plane.quaternion))
+            .add(_shakeOffset.clone().applyQuaternion(plane.quaternion));
 
         cameraQuat.slerp(plane.quaternion, 1 - Math.exp(-CAM_SLERP_RATE * dt));
         camera.quaternion.copy(cameraQuat);
+        if (_shakeAngle.lengthSq() > 1e-8) {
+            _shakeTempEuler.set(_shakeAngle.x, _shakeAngle.y, _shakeAngle.z, 'YXZ');
+            _shakeTempQuat.setFromEuler(_shakeTempEuler);
+            camera.quaternion.multiply(_shakeTempQuat);
+        }
         cameraControls.target.copy(plane.position);
         cameraFollowTarget.copy(plane.position);
         return;
@@ -1598,6 +1647,12 @@ function updateOrbitCamera(dt) {
             if (freeCamKeys.q) camera.position.y -= speed;
         }
         camera.quaternion.copy(quat);
+        camera.position.add(_shakeOffset.clone().applyQuaternion(camera.quaternion));
+        if (_shakeAngle.lengthSq() > 1e-8) {
+            _shakeTempEuler.set(_shakeAngle.x, _shakeAngle.y, _shakeAngle.z, 'YXZ');
+            _shakeTempQuat.setFromEuler(_shakeTempEuler);
+            camera.quaternion.multiply(_shakeTempQuat);
+        }
         return;
     }
 
@@ -1606,6 +1661,14 @@ function updateOrbitCamera(dt) {
     cameraControls.target.add(cameraTargetDelta);
     cameraFollowTarget.copy(plane.position);
     cameraControls.update();
+
+    // Camera shake for orbit mode
+    camera.position.add(_shakeOffset.clone().applyQuaternion(camera.quaternion));
+    if (_shakeAngle.lengthSq() > 1e-8) {
+        _shakeTempEuler.set(_shakeAngle.x, _shakeAngle.y, _shakeAngle.z, 'YXZ');
+        _shakeTempQuat.setFromEuler(_shakeTempEuler);
+        camera.quaternion.multiply(_shakeTempQuat);
+    }
 }
 
 const lastCameraPos = new THREE.Vector3();
@@ -1884,6 +1947,7 @@ function updateExplosion() {
 onCrash((pos, speed) => {
     createExplosion(pos, speed);
     combat.explode(pos, 30, 15);
+    triggerShake(Math.min(24, 14 + speed * 0.05));
 });
 
 combat.onEnemyKill((id, pos) => {
@@ -1917,8 +1981,8 @@ function animate() {
     lastCameraPos.copy(camera.position);
 
     // 3. World Streamers
-    updateChunks(scene, camera, frustum, cameraVelocity.x, cameraVelocity.z);
-    { const _p = getPlane(); _autoDir.set(0, 0, -1).applyQuaternion(_p.quaternion); _autoOrigin.copy(_p.position).addScaledVector(_autoDir, 12); combat.updateAutoFire(dt, _autoOrigin, _autoDir); combat.update(dt, _p.position, _p.quaternion); }
+    { const _p = getPlane(); _autoDir.set(0, 0, -1).applyQuaternion(_p.quaternion); _autoOrigin.copy(_p.position).addScaledVector(_autoDir, 12); combat.updateAutoFire(dt, _autoOrigin, _autoDir); combat.update(dt, _p.position, _p.quaternion); updateChunks(scene, camera, frustum, cameraVelocity.x, cameraVelocity.z, _p.position.x, _p.position.z); }
+    triggerShake(combat.getCameraShakeThisFrame());
     if (_lockMode) {
         const _p2 = getPlane();
         const tgtId = combat.findLockTarget(_p2.position, _p2.quaternion);
@@ -1953,6 +2017,7 @@ function animate() {
         const deathPos = getPlane().position.clone();
         createExplosion(deathPos, 300);
         combat.explode(deathPos, 50, 25);
+        triggerShake(8);
         setFrozen(true);
     }
     if (_playerDead && now - _playerDeathTime > 3000) {
