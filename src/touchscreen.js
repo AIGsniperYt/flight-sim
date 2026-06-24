@@ -26,12 +26,15 @@ function createElement(tag, attrs = {}, style = {}) {
 
 function isTouchDevice() {
     if (typeof window === 'undefined') return false;
-    const hasTouchPoints = navigator.maxTouchPoints > 0 || navigator.msMaxTouchPoints > 0;
-    if (!hasTouchPoints) return false;
+    if ('ontouchstart' in window) return true;
+    if (navigator.maxTouchPoints > 0 || navigator.msMaxTouchPoints > 0) return true;
     if (window.matchMedia) {
-        return window.matchMedia('(pointer: coarse)').matches;
+        if (window.matchMedia('(pointer: coarse)').matches) return true;
+        if (window.matchMedia('(hover: none)').matches) return true;
     }
-    return true;
+    const ua = navigator.userAgent || '';
+    if (/Android|iPad|iPhone|iPod|Mobile|Silk|Tablet/.test(ua)) return true;
+    return false;
 }
 
 function clamp(value, min, max) {
@@ -392,8 +395,23 @@ function toggleSettingsOverlay(forceState) {
     settingsOverlay.style.display = nextState ? 'flex' : 'none';
 }
 
+function activateTouchFallback() {
+    function handleFirstTouchEvent(event) {
+        if (event.type === 'pointerdown' && event.pointerType !== 'touch') return;
+        initTouchscreen(true);
+        window.removeEventListener('pointerdown', handleFirstTouchEvent);
+        window.removeEventListener('touchstart', handleFirstTouchEvent);
+    }
+
+    window.addEventListener('pointerdown', handleFirstTouchEvent, { once: true, passive: true });
+    window.addEventListener('touchstart', handleFirstTouchEvent, { once: true, passive: true });
+}
+
 export function initTouchscreen(force = false) {
-    if (!force && !isTouchDevice()) return false;
+    if (!force && !isTouchDevice()) {
+        activateTouchFallback();
+        return false;
+    }
     if (uiRoot) return true;
     hasTouch = true;
     createTouchUI();
