@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { getHeightScaled } from './terrain.js';
 import { checkTerrainBroadPhase } from './world.js';
+import { getInputState } from './input.js';
 
 const planeGeometry = new THREE.BoxGeometry(4, 1, 8);
 const planeMaterial = new THREE.MeshStandardMaterial({ color: 0xff3aae, metalness: 0.2, roughness: 0.6 });
@@ -211,7 +212,6 @@ const flightState = {
 };
 syncFlightStateAircraft();
 
-const keyboard = {};
 let _suppressFlightInputs = false;
 let _frozenPos = null;
 let _frozenVel = null;
@@ -301,14 +301,6 @@ export function initPhysics(scene) {
     scene.add(plane);
     initDebugVectorArrows(scene);
     resetAircraftState();
-
-    document.addEventListener('keydown', (event) => {
-        keyboard[event.code] = true;
-        if (event.ctrlKey || event.metaKey || ["Space", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].indexOf(event.code) > -1) {
-            event.preventDefault();
-        }
-    });
-    document.addEventListener('keyup', (event) => keyboard[event.code] = false);
 }
 
 function initDebugVectorArrows(scene) {
@@ -453,13 +445,18 @@ export function resetAircraft() {
 export function updatePlane(dt) {
     if (_crashed) { _physicsTime = 0; return; }
     const _start = performance.now();
-    const pitchInput = _suppressFlightInputs ? 0 : (keyboard['KeyW'] ? 1 : 0) + (keyboard['KeyS'] ? -1 : 0);
-    const rollInput  = _suppressFlightInputs ? 0 : (keyboard['KeyA'] ? 1 : 0) + (keyboard['KeyD'] ? -1 : 0);
-    const yawInput   = _suppressFlightInputs ? 0 : (keyboard['KeyQ'] ? 1 : 0) + (keyboard['KeyE'] ? -1 : 0);
-    const throttleInput = _suppressFlightInputs ? 0 : (keyboard['ArrowUp'] ? 1 : 0) + (keyboard['ArrowDown'] ? -1 : 0);
+    const input = getInputState();
+    const pitchInput = _suppressFlightInputs ? 0 : input.pitch;
+    const rollInput = _suppressFlightInputs ? 0 : input.roll;
+    const yawInput = _suppressFlightInputs ? 0 : input.yaw;
+    const throttleInput = _suppressFlightInputs ? 0 : input.throttleAxis;
     const controls = AIRCRAFT.controls;
 
-    throttle = THREE.MathUtils.clamp(throttle + throttleInput * 3.0 * dt, 0, 1);
+    if (input.throttleTarget !== null) {
+        throttle = THREE.MathUtils.lerp(throttle, input.throttleTarget, Math.min(1, dt * 8));
+    } else {
+        throttle = THREE.MathUtils.clamp(throttle + throttleInput * 3.0 * dt, 0, 1);
+    }
 
     // Cache orientation vectors: recompute only if quaternion changed
     if (!plane.quaternion.equals(_cachedOrientationQuat)) {
@@ -552,7 +549,7 @@ export function updatePlane(dt) {
     const dragBreakdown = getDragBreakdown(liftCoefficient.cl, aoa);
     const liftForce = dynamicPressure * AIRCRAFT.wingArea * liftCoefficient.cl;
     const dragForce = dynamicPressure * AIRCRAFT.wingArea * dragBreakdown.cd;
-    const airbrakeOn = keyboard['Space'];
+    const airbrakeOn = getInputState().airbrake;
     const airbrakeDrag = airbrakeOn ? dynamicPressure * AIRBRAKE_AREA * 1.0 : 0;
     const _milPower = 76000;
     const _abMult = 1.7;

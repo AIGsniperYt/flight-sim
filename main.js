@@ -28,6 +28,8 @@ import {
     setFrozen,
     setThrottle
 } from './src/physics.js';
+import { initInput } from './src/input.js';
+import { initTouchscreen } from './src/touchscreen.js';
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x000000);
@@ -242,8 +244,13 @@ scene.add(sunLight);
 const ambientLight = new THREE.AmbientLight(0x223355, 0.4);
 scene.add(ambientLight);
 
+initInput();
 initPhysics(scene);
 combat.init(scene);
+
+if (typeof window !== 'undefined') {
+    initTouchscreen();
+}
 
 const frustum = new THREE.Frustum();
 const viewProjectionMatrix = new THREE.Matrix4();
